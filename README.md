@@ -1,0 +1,113 @@
+# mesh-ecology-translate
+
+Lightweight translation layer for turning input context into structured translation results across multiple AI providers.
+
+This package accepts a `TranslationRequest`, selects a provider, and returns a `TranslationResult`. It is designed as a small reusable library with a local-first posture and explicit provider behavior.
+
+## Installation
+
+```bash
+npm install mesh-ecology-translate
+```
+
+## Basic Usage
+
+```js
+import { translate } from "mesh-ecology-translate";
+
+const result = await translate({
+  inputs: [{ type: "text", content: "Summarize the habitat report for later review." }],
+  profile: "command",
+  providerPreference: "local_preferred",
+  securityPosture: "standard"
+});
+
+console.log(result.grammarCandidate);
+console.log(result.providerInfo);
+```
+
+## TranslationRequest
+
+`TranslationRequest` is the input contract for a translation call.
+
+Fields:
+
+- `inputs`: array of `{ type: "text", content: string }`
+- `profile`: one of `command`, `conversational`, `clarification`
+- `continuity`: optional object for prior grammar or conversation state
+- `providerPreference`: one of `local_preferred`, `local_only`, `remote_allowed`, `specific`
+- `provider`: optional provider name, required when `providerPreference` is `specific`
+- `securityPosture`: one of `sensitive`, `standard`, `public`
+- `timeoutMs`: optional per-request timeout override
+- `signal`: optional `AbortSignal` for cancellation
+
+Notes:
+
+- v1 accepts text inputs only.
+- `signal` is runtime-only and should not be treated as serialized data.
+
+## TranslationResult
+
+`TranslationResult` is the normalized provider output.
+
+Fields:
+
+- `grammarCandidate`: flexible object returned for downstream consumers
+- `confidence`: number from `0` to `1`
+- `ambiguities`: array of strings
+- `needsClarification`: boolean
+- `notes`: optional array of strings
+- `providerInfo`: object with:
+  - `provider`
+  - `model`
+  - `latency` optional
+
+## Providers
+
+Current providers:
+
+- `ollama`: local Ollama integration
+- `rest`: OpenAI-compatible REST APIs
+- `codex-cli`: stub adapter only
+
+Routing supports:
+
+- `local_preferred`
+- `local_only`
+- `remote_allowed`
+- `specific`
+
+## Behavior
+
+The library includes a small amount of operational hardening:
+
+- timeout support for provider calls
+- cancellation via `AbortSignal`
+- conservative output normalization before provider text becomes interpretation output
+- classified provider and routing errors for easier consumer handling
+
+Normalization is intentionally narrow. It currently strips obvious reasoning wrappers such as `<think>...</think>` and trims the result. It does not try to deeply parse or reinterpret model output.
+
+## Configuration
+
+This package is library-shaped and expects configuration to be supplied by the consumer.
+
+- It does not auto-load `.env` files.
+- Environment values must already be present in `process.env`, or provider options must be supplied directly when constructing adapters or routers.
+- The default provider timeout is `30000ms`, which can be overridden per request with `timeoutMs`.
+
+## Non-Goals
+
+This package does not:
+
+- execute actions
+- call tools or functions
+- act as an agent runtime
+- manage long-lived memory
+- orchestrate workflows
+- interact with mesh systems
+
+## Notes
+
+- `grammarCandidate` is intentionally flexible. This package does not deeply enforce its internal shape beyond result validation.
+- The package is intended as a reusable building block for applications that want a small, explicit translation layer over multiple provider backends.
