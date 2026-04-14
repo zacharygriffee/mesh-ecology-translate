@@ -1,0 +1,17 @@
+{
+  "name": "mesh-ecology-translate",
+  "version": "0.1.0",
+  "description": "Local-first translation-provider layer for grammar candidates.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT"
+}
