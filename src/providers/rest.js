@@ -1,6 +1,52 @@
 import { ProviderAdapter, buildPrompt, buildTranslationResult, readErrorBody } from "./base.js";
 import { validateTranslationRequest } from "../contracts/index.js";
 
+function flattenContent(content) {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  return content
+    .map((item) => {
+      if (typeof item === "string") {
+        return item;
+      }
+
+      if (item?.type === "text" && typeof item.text === "string") {
+        return item.text;
+      }
+
+      if (typeof item?.text === "string") {
+        return item.text;
+      }
+
+      return "";
+    })
+    .join("\n")
+    .trim();
+}
+
+function extractInterpretation(payload) {
+  const choice = payload?.choices?.[0];
+  const directContent = flattenContent(choice?.message?.content);
+
+  if (directContent) {
+    return directContent;
+  }
+
+  const reasoningContent = flattenContent(choice?.message?.reasoning_content ?? choice?.reasoning_content);
+
+  if (reasoningContent) {
+    return reasoningContent;
+  }
+
+  return "";
+}
+
 export class RestProvider extends ProviderAdapter {
   constructor(options = {}) {
     super({
@@ -55,7 +101,7 @@ export class RestProvider extends ProviderAdapter {
     }
 
     const payload = await response.json();
-    const interpretation = payload?.choices?.[0]?.message?.content?.trim();
+    const interpretation = extractInterpretation(payload);
 
     return buildTranslationResult({
       request,

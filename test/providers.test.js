@@ -76,6 +76,64 @@ test("rest provider returns a valid structure with a mocked OpenAI-compatible re
   assert.equal(result.providerInfo.provider, "rest");
 });
 
+test("rest provider falls back to reasoning_content when content is empty", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: "",
+              reasoning_content: "Reasoning interpretation"
+            }
+          }
+        ]
+      })
+  });
+
+  const result = await provider.translate(
+    createRequest({
+      provider: "rest"
+    })
+  );
+
+  validateTranslationResult(result);
+  assert.equal(result.grammarCandidate.interpretation, "Reasoning interpretation");
+});
+
+test("rest provider flattens array content responses", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: [
+                { type: "text", text: "First line." },
+                { type: "text", text: "Second line." }
+              ]
+            }
+          }
+        ]
+      })
+  });
+
+  const result = await provider.translate(
+    createRequest({
+      provider: "rest"
+    })
+  );
+
+  validateTranslationResult(result);
+  assert.equal(result.grammarCandidate.interpretation, "First line.\nSecond line.");
+});
+
 test("ollama provider checks availability and returns a valid structure", async () => {
   const calls = [];
   const provider = new OllamaProvider({
