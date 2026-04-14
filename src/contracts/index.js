@@ -18,6 +18,16 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function isAbortSignalLike(value) {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    typeof value.aborted === "boolean" &&
+    typeof value.addEventListener === "function" &&
+    typeof value.removeEventListener === "function"
+  );
+}
+
 export function validateTranslationRequest(request) {
   assert(isPlainObject(request), "TranslationRequest must be an object.");
   assert(Array.isArray(request.inputs), "TranslationRequest.inputs must be an array.");
@@ -50,6 +60,20 @@ export function validateTranslationRequest(request) {
 
   if (request.continuity !== undefined) {
     assert(isPlainObject(request.continuity), "TranslationRequest.continuity must be an object.");
+  }
+
+  if (request.timeoutMs !== undefined) {
+    assert(
+      Number.isFinite(request.timeoutMs) && request.timeoutMs > 0,
+      "TranslationRequest.timeoutMs must be a positive number when provided."
+    );
+  }
+
+  if (request.signal !== undefined) {
+    assert(
+      isAbortSignalLike(request.signal),
+      "TranslationRequest.signal must be an AbortSignal-compatible object when provided."
+    );
   }
 
   if (request.providerPreference === "specific") {

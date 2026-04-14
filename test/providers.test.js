@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { validateTranslationResult } from "../src/contracts/index.js";
 import { CodexCliProvider, OllamaProvider, RestProvider } from "../src/providers/index.js";
 import { translate } from "../src/index.js";
+import { PROVIDER_ERROR_CODES, ProviderError } from "../src/errors/index.js";
 
 function createRequest(overrides = {}) {
   return {
@@ -29,6 +30,27 @@ function createJsonResponse(body, { ok = true, status = 200 } = {}) {
   };
 }
 
+function createAbortablePendingFetch() {
+  return async (url, options = {}) =>
+    new Promise((resolve, reject) => {
+      const abortError = new Error("The operation was aborted.");
+      abortError.name = "AbortError";
+
+      if (options.signal?.aborted) {
+        reject(abortError);
+        return;
+      }
+
+      options.signal?.addEventListener(
+        "abort",
+        () => {
+          reject(abortError);
+        },
+        { once: true }
+      );
+    });
+}
+
 test("codex-cli provider returns a valid stubbed structure", async () => {
   const provider = new CodexCliProvider();
   const result = await provider.translate(createRequest());
@@ -46,7 +68,11 @@ test("rest provider reports unavailable when env config is missing", async () =>
   });
 
   assert.equal(await provider.isAvailable(), false);
-  await assert.rejects(() => provider.translate(createRequest()), /requires REST_BASE_URL/);
+  await assert.rejects(() => provider.translate(createRequest()), (error) => {
+    assert(error instanceof ProviderError);
+    assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_UNAVAILABLE);
+    return true;
+  });
 });
 
 test("rest provider returns a valid structure with a mocked OpenAI-compatible response", async () => {
@@ -87,7 +113,7 @@ test("rest provider falls back to reasoning_content when content is empty", asyn
           {
             message: {
               content: "",
-              reasoning_content: "Reasoning interpretation"
+              reasoning_content: "<think>private chain</think>\nReasoning interpretation"
             }
           }
         ]
@@ -147,7 +173,7 @@ test("ollama provider checks availability and returns a valid structure", async 
       }
 
       return createJsonResponse({
-        response: "Local interpretation"
+        response: "<think>private chain</think>\nLocal interpretation"
       });
     }
   });
@@ -162,7 +188,92 @@ test("ollama provider checks availability and returns a valid structure", async 
 
   validateTranslationResult(result);
   assert.equal(result.providerInfo.provider, "ollama");
+  assert.equal(result.grammarCandidate.interpretation, "Local interpretation");
   assert.equal(calls.length, 2);
+});
+
+test("rest provider times out with a classified error", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: createAbortablePendingFetch()
+  });
+
+  await assert.rejects(
+    () =>
+      provider.translate(
+        createRequest({
+          provider: "rest",
+          timeoutMs: 20
+        })
+      ),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_TIMEOUT);
+      assert.equal(error.details.timeoutMs, 20);
+      return true;
+    }
+  );
+});
+
+test("rest provider rejects invalid empty responses with a classified error", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: ""
+            }
+          }
+        ]
+      })
+  });
+
+  await assert.rejects(
+    () =>
+      provider.translate(
+        createRequest({
+          provider: "rest"
+        })
+      ),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      return true;
+    }
+  );
+});
+
+test("ollama provider respects cancellation signals", async () => {
+  const controller = new AbortController();
+  const provider = new OllamaProvider({
+    baseUrl: "http://127.0.0.1:11434",
+    model: "llama3.2:3b",
+    fetchImpl: createAbortablePendingFetch()
+  });
+
+  setTimeout(() => controller.abort(), 10);
+
+  await assert.rejects(
+    () =>
+      provider.translate(
+        createRequest({
+          provider: "ollama",
+          timeoutMs: 100,
+          signal: controller.signal
+        })
+      ),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.REQUEST_CANCELLED);
+      return true;
+    }
+  );
 });
 
 test("top-level translate validates the full request to result flow", async () => {

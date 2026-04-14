@@ -68,6 +68,31 @@ test("validateTranslationRequest requires a provider for specific preference", (
   );
 });
 
+test("validateTranslationRequest accepts timeoutMs and AbortSignal-like input", () => {
+  const controller = new AbortController();
+
+  assert.doesNotThrow(() =>
+    validateTranslationRequest(
+      createRequest({
+        timeoutMs: 1500,
+        signal: controller.signal
+      })
+    )
+  );
+});
+
+test("validateTranslationRequest rejects invalid timeoutMs", () => {
+  assert.throws(
+    () =>
+      validateTranslationRequest(
+        createRequest({
+          timeoutMs: 0
+        })
+      ),
+    /timeoutMs must be a positive number/
+  );
+});
+
 test("validateTranslationResult accepts a valid result", () => {
   assert.doesNotThrow(() => validateTranslationResult(createResult()));
 });

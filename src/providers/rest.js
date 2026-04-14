@@ -1,5 +1,12 @@
 import { ProviderAdapter, buildPrompt, buildTranslationResult, readErrorBody } from "./base.js";
 import { validateTranslationRequest } from "../contracts/index.js";
+import {
+  createProviderInvalidResponseError,
+  createProviderUnavailableError,
+  isProviderError
+} from "../errors/index.js";
+import { normalizeProviderText } from "../normalize/index.js";
+import { executeWithRequestControl } from "./runtime.js";
 
 function flattenContent(content) {
   if (typeof content === "string") {
@@ -68,48 +75,96 @@ export class RestProvider extends ProviderAdapter {
     validateTranslationRequest(request);
 
     if (!(await this.isAvailable())) {
-      throw new Error("REST provider requires REST_BASE_URL, REST_API_KEY, and REST_MODEL.");
+      throw createProviderUnavailableError(
+        this.name,
+        "REST provider requires REST_BASE_URL, REST_API_KEY, and REST_MODEL."
+      );
     }
 
-    const prompt = buildPrompt(request);
-    const startedAt = performance.now();
-    const response = await this.fetchImpl(`${this.baseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${this.apiKey}`
-      },
-      body: JSON.stringify({
-        model: this.model,
-        temperature: 0.2,
-        messages: [
-          {
-            role: "system",
-            content: prompt.system
-          },
-          {
-            role: "user",
-            content: prompt.user
-          }
-        ]
-      })
-    });
-
-    if (!response.ok) {
-      const body = await readErrorBody(response);
-      throw new Error(`REST provider request failed with status ${response.status}: ${body}`);
-    }
-
-    const payload = await response.json();
-    const interpretation = extractInterpretation(payload);
-
-    return buildTranslationResult({
-      request,
+    return executeWithRequestControl({
       provider: this.name,
-      model: this.model,
-      latency: Math.round(performance.now() - startedAt),
-      interpretation: interpretation || `REST translation placeholder for ${request.profile}.`,
-      notes: ["Minimal OpenAI-compatible REST translation template."]
+      request,
+      operation: async ({ signal }) => {
+        const prompt = buildPrompt(request);
+        const startedAt = performance.now();
+        let response;
+
+        try {
+          response = await this.fetchImpl(`${this.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${this.apiKey}`
+            },
+            body: JSON.stringify({
+              model: this.model,
+              temperature: 0.2,
+              messages: [
+                {
+                  role: "system",
+                  content: prompt.system
+                },
+                {
+                  role: "user",
+                  content: prompt.user
+                }
+              ]
+            }),
+            signal
+          });
+        } catch (error) {
+          if (isProviderError(error)) {
+            throw error;
+          }
+
+          throw createProviderUnavailableError(
+            this.name,
+            `REST provider request failed before a response was received: ${error.message}`,
+            { cause: error }
+          );
+        }
+
+        if (!response.ok) {
+          const body = await readErrorBody(response);
+          throw createProviderUnavailableError(
+            this.name,
+            `REST provider request failed with status ${response.status}: ${body}`
+          );
+        }
+
+        let payload;
+
+        try {
+          payload = await response.json();
+        } catch (error) {
+          throw createProviderInvalidResponseError(
+            this.name,
+            "REST provider returned invalid JSON.",
+            { cause: error }
+          );
+        }
+
+        const interpretation = normalizeProviderText(extractInterpretation(payload));
+
+        if (!interpretation) {
+          throw createProviderInvalidResponseError(
+            this.name,
+            "REST provider response did not contain usable translation text."
+          );
+        }
+
+        return buildTranslationResult({
+          request,
+          provider: this.name,
+          model: this.model,
+          latency: Math.round(performance.now() - startedAt),
+          interpretation,
+          notes: [
+            "Minimal OpenAI-compatible REST translation template.",
+            "Normalization strips obvious reasoning wrappers only."
+          ]
+        });
+      }
     });
   }
 }

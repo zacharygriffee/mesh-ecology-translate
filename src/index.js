@@ -8,6 +8,7 @@ export {
 } from "./contracts/index.js";
 export {
   CodexCliProvider,
+  DEFAULT_PROVIDER_TIMEOUT_MS,
   OllamaProvider,
   PROFILE_TEMPLATES,
   ProviderAdapter,
@@ -21,6 +22,10 @@ export {
   createDefaultProviders,
   createDefaultRouter
 } from "./router/index.js";
+export {
+  PROVIDER_ERROR_CODES,
+  ProviderError
+} from "./errors/index.js";
 
 import { validateTranslationRequest, validateTranslationResult } from "./contracts/index.js";
 import { createDefaultRouter } from "./router/index.js";

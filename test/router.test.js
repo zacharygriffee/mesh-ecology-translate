@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { ProviderRouter, ProviderRoutingError } from "../src/router/index.js";
 import { validateTranslationResult } from "../src/contracts/index.js";
+import { PROVIDER_ERROR_CODES, ProviderError } from "../src/errors/index.js";
 
 function createRequest(overrides = {}) {
   return {
@@ -77,15 +78,11 @@ test("local_only fails when the local provider is unavailable", async () => {
     }
   });
 
-  await assert.rejects(
-    () =>
-      router.translate(
-        createRequest({
-          providerPreference: "local_only"
-        })
-      ),
-    ProviderRoutingError
-  );
+  await assert.rejects(() => router.translate(createRequest({ providerPreference: "local_only" })), (error) => {
+    assert(error instanceof ProviderError);
+    assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_UNAVAILABLE);
+    return true;
+  });
 });
 
 test("remote_allowed selects the default remote provider", async () => {
@@ -122,4 +119,28 @@ test("specific provider uses the named provider when available", async () => {
   );
 
   assert.equal(result.providerInfo.provider, "codex-cli");
+});
+
+test("specific provider selection fails with an explicit unsupported-provider error", async () => {
+  const router = new ProviderRouter({
+    providers: {
+      ollama: createProvider("ollama"),
+      rest: createProvider("rest")
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      router.translate(
+        createRequest({
+          providerPreference: "specific",
+          provider: "missing-provider"
+        })
+      ),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.UNSUPPORTED_PROVIDER);
+      return true;
+    }
+  );
 });

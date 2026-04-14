@@ -10,6 +10,8 @@ Core doctrine:
 - Remain local-first.
 - Keep provider behavior explicit and readable.
 - Avoid mesh semantics and execution semantics.
+- Fail explicitly on timeout, cancellation, and invalid provider responses.
+- Normalize obvious reasoning wrappers without inventing semantics.
 
 This repository does not:
 
@@ -21,3 +23,5 @@ This repository does not:
 - run an agent loop
 
 Edge owns grammar definition, execution, policy, authority, and mesh interaction. This repository only translates input into candidate structures that Edge can consume.
+
+As a library, this repository expects runtime configuration to be supplied by the consumer. It does not auto-load `.env` files by default.

@@ -1,13 +1,13 @@
 import { validateTranslationRequest } from "../contracts/index.js";
 import { CodexCliProvider, OllamaProvider, RestProvider } from "../providers/index.js";
+import {
+  ProviderRoutingError,
+  createProviderUnavailableError,
+  createUnsupportedProviderError,
+  isProviderError
+} from "../errors/index.js";
 
-export class ProviderRoutingError extends Error {
-  constructor(message, details = {}) {
-    super(message);
-    this.name = "ProviderRoutingError";
-    this.details = details;
-  }
-}
+export { ProviderRoutingError } from "../errors/index.js";
 
 function appendRoutingNotes(result, routingNotes) {
   if (routingNotes.length === 0) {
@@ -45,7 +45,7 @@ export class ProviderRouter {
     if (!provider) {
       return {
         available: false,
-        reason: `Provider "${name}" is not registered.`
+        error: createProviderUnavailableError(name, `Provider "${name}" is not registered.`)
       };
     }
 
@@ -55,12 +55,18 @@ export class ProviderRouter {
 
       return {
         available,
-        reason: available ? null : `Provider "${name}" is unavailable.`
+        error: available
+          ? null
+          : createProviderUnavailableError(name, `Provider "${name}" is unavailable.`)
       };
     } catch (error) {
       return {
         available: false,
-        reason: `Provider "${name}" availability check failed: ${error.message}`
+        error: createProviderUnavailableError(
+          name,
+          `Provider "${name}" availability check failed: ${error.message}`,
+          { cause: error }
+        )
       };
     }
   }
@@ -83,6 +89,10 @@ export class ProviderRouter {
   async translate(request) {
     validateTranslationRequest(request);
 
+    if (request.providerPreference === "specific" && !this.getProvider(request.provider)) {
+      throw createUnsupportedProviderError(request.provider);
+    }
+
     const providerOrder = this.getProviderOrder(request);
     const routingNotes = [];
     const failures = [];
@@ -91,7 +101,7 @@ export class ProviderRouter {
       const availability = await this.getAvailability(providerName);
 
       if (!availability.available) {
-        failures.push(availability.reason);
+        failures.push(availability.error);
         continue;
       }
 
@@ -101,18 +111,36 @@ export class ProviderRouter {
         const result = await provider.translate(request);
 
         if (failures.length > 0) {
-          routingNotes.push(`Routing fallback: ${failures.join(" ")}`);
+          routingNotes.push(
+            `Routing fallback: ${failures.map((failure) => failure.message).join(" ")}`
+          );
         }
 
         return appendRoutingNotes(result, routingNotes);
       } catch (error) {
-        failures.push(`Provider "${providerName}" failed: ${error.message}`);
+        failures.push(
+          isProviderError(error)
+            ? error
+            : createProviderUnavailableError(
+                providerName,
+                `Provider "${providerName}" failed: ${error.message}`,
+                { cause: error }
+              )
+        );
       }
+    }
+
+    if (failures.length === 1) {
+      throw failures[0];
     }
 
     throw new ProviderRoutingError("No provider could satisfy the translation request.", {
       providerPreference: request.providerPreference,
-      failures
+      failures: failures.map((failure) => ({
+        code: failure.code,
+        provider: failure.provider,
+        message: failure.message
+      }))
     });
   }
 }
