@@ -35,6 +35,7 @@ export function buildPrompt(request) {
   const inputText = extractPrimaryText(request);
   const template = PROFILE_TEMPLATES[request.profile];
   const continuity = request.continuity ? JSON.stringify(request.continuity, null, 2) : "none";
+  const context = request.context ? JSON.stringify(request.context, null, 2) : "none";
 
   return {
     templateId: request.profile,
@@ -49,6 +50,7 @@ export function buildPrompt(request) {
       `Security posture: ${request.securityPosture}`,
       `Instructions: ${template}`,
       `Continuity: ${continuity}`,
+      `Explicit context: ${context}`,
       `Input:\n${inputText}`
     ].join("\n\n")
   };
@@ -62,6 +64,7 @@ export function createGrammarCandidate({ request, templateId, interpretation, me
     interpretation,
     template: templateId,
     continuity: request.continuity ?? null,
+    context: request.context ?? null,
     metadata
   };
 }

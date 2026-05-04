@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { validateTranslationResult } from "../src/contracts/index.js";
-import { CodexCliProvider, OllamaProvider, RestProvider } from "../src/providers/index.js";
+import { buildPrompt, CodexCliProvider, OllamaProvider, RestProvider } from "../src/providers/index.js";
 import { translate } from "../src/index.js";
 import { PROVIDER_ERROR_CODES, ProviderError } from "../src/errors/index.js";
 
@@ -58,6 +58,23 @@ test("codex-cli provider returns a valid stubbed structure", async () => {
   validateTranslationResult(result);
   assert.equal(result.providerInfo.provider, "codex-cli");
   assert.equal(result.grammarCandidate.metadata.stub, true);
+});
+
+test("prompt and grammar candidate include explicit context as translation input only", async () => {
+  const request = createRequest({
+    context: {
+      operatorFocus: "habitat report",
+      activeReferents: [{ id: "report-7" }],
+      ambiguityMarkers: ["report target is ambiguous"]
+    }
+  });
+  const prompt = buildPrompt(request);
+  const provider = new CodexCliProvider();
+  const result = await provider.translate(request);
+
+  assert.match(prompt.user, /Explicit context:/);
+  assert.match(prompt.user, /habitat report/);
+  assert.deepEqual(result.grammarCandidate.context, request.context);
 });
 
 test("rest provider reports unavailable when env config is missing", async () => {

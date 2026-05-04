@@ -4,6 +4,8 @@
 
 It accepts input context, selects a provider, and returns grammar candidates for downstream consumers such as Edge.
 
+Edge may pass explicit translation context such as operator focus, active referents, visibility hints, continuity summaries, ambiguity markers, and reason or evidence references. The context is treated only as provider input for translation.
+
 Core doctrine:
 
 - Produce grammar candidates only.
@@ -21,6 +23,7 @@ This repository does not:
 - interact with mesh infrastructure
 - call tools or functions
 - run an agent loop
+- turn explicit context into authority, execution, workflow behavior, or hidden memory
 
 Edge owns grammar definition, execution, policy, authority, and mesh interaction. This repository only translates input into candidate structures that Edge can consume.
 

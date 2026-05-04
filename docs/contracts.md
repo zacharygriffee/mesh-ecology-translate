@@ -9,6 +9,7 @@ Fields:
 - `inputs`: array of `{ type: "text", content: string }`
 - `profile`: one of `command`, `conversational`, `clarification`
 - `continuity`: optional object carrying prior grammar or conversation state
+- `context`: optional explicit Edge context object, limited to the supported translation context vocabulary
 - `providerPreference`: one of `local_preferred`, `local_only`, `remote_allowed`, `specific`
 - `provider`: optional provider name, required when `providerPreference` is `specific`
 - `securityPosture`: one of `sensitive`, `standard`, `public`
@@ -22,8 +23,22 @@ Validation rules:
 - `content` must be a non-empty string
 - enum fields must match the supported values
 - `provider` is required only for `specific`
+- `context` may contain only JSON-compatible values under supported context fields
 - `timeoutMs` must be positive when provided
 - `signal` is runtime-only and is not meant for serialization
+
+Supported context fields:
+
+- `operatorFocus`
+- `activeReferents`
+- `portalVisibility`
+- `exportVisibility`
+- `continuitySummaries`
+- `ambiguityMarkers`
+- `reasonReferences`
+- `evidenceReferences`
+
+Context is translation input only. It may help providers interpret user text, but it does not grant tools, authority, execution behavior, mesh access, hidden memory, or workflow behavior.
 
 ## TranslationResult
 

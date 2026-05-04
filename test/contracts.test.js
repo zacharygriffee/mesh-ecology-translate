@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  TRANSLATION_CONTEXT_FIELDS,
   validateTranslationRequest,
   validateTranslationResult
 } from "../src/contracts/index.js";
@@ -78,6 +79,64 @@ test("validateTranslationRequest accepts timeoutMs and AbortSignal-like input", 
         signal: controller.signal
       })
     )
+  );
+});
+
+test("validateTranslationRequest accepts explicit Edge context vocabulary", () => {
+  assert.deepEqual(TRANSLATION_CONTEXT_FIELDS, [
+    "operatorFocus",
+    "activeReferents",
+    "portalVisibility",
+    "exportVisibility",
+    "continuitySummaries",
+    "ambiguityMarkers",
+    "reasonReferences",
+    "evidenceReferences"
+  ]);
+
+  assert.doesNotThrow(() =>
+    validateTranslationRequest(
+      createRequest({
+        context: {
+          operatorFocus: "habitat report",
+          activeReferents: [{ id: "report-7", label: "Habitat Report" }],
+          portalVisibility: { visible: ["habitat-report"] },
+          exportVisibility: { allowed: false },
+          continuitySummaries: ["The operator was reviewing wetlands notes."],
+          ambiguityMarkers: ["report could refer to draft or final"],
+          reasonReferences: ["operator-request"],
+          evidenceReferences: [{ id: "evidence-1", kind: "document" }]
+        }
+      })
+    )
+  );
+});
+
+test("validateTranslationRequest rejects unsupported context fields", () => {
+  assert.throws(
+    () =>
+      validateTranslationRequest(
+        createRequest({
+          context: {
+            toolPlan: ["open", "execute"]
+          }
+        })
+      ),
+    /context\.toolPlan is not supported/
+  );
+});
+
+test("validateTranslationRequest rejects non-serializable context values", () => {
+  assert.throws(
+    () =>
+      validateTranslationRequest(
+        createRequest({
+          context: {
+            operatorFocus: () => "hidden"
+          }
+        })
+      ),
+    /JSON-compatible values/
   );
 });
 

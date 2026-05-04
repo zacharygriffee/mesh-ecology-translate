@@ -35,6 +35,7 @@ Fields:
 - `inputs`: array of `{ type: "text", content: string }`
 - `profile`: one of `command`, `conversational`, `clarification`
 - `continuity`: optional object for prior grammar or conversation state
+- `context`: optional explicit translation context object from Edge
 - `providerPreference`: one of `local_preferred`, `local_only`, `remote_allowed`, `specific`
 - `provider`: optional provider name, required when `providerPreference` is `specific`
 - `securityPosture`: one of `sensitive`, `standard`, `public`
@@ -44,6 +45,7 @@ Fields:
 Notes:
 
 - v1 accepts text inputs only.
+- `context` is limited to explicit translation input fields: `operatorFocus`, `activeReferents`, `portalVisibility`, `exportVisibility`, `continuitySummaries`, `ambiguityMarkers`, `reasonReferences`, and `evidenceReferences`.
 - `signal` is runtime-only and should not be treated as serialized data.
 
 ## TranslationResult

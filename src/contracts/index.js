@@ -7,6 +7,16 @@ export const PROVIDER_PREFERENCES = [
   "specific"
 ];
 export const SECURITY_POSTURES = ["sensitive", "standard", "public"];
+export const TRANSLATION_CONTEXT_FIELDS = [
+  "operatorFocus",
+  "activeReferents",
+  "portalVisibility",
+  "exportVisibility",
+  "continuitySummaries",
+  "ambiguityMarkers",
+  "reasonReferences",
+  "evidenceReferences"
+];
 
 function assert(condition, message) {
   if (!condition) {
@@ -26,6 +36,36 @@ function isAbortSignalLike(value) {
     typeof value.addEventListener === "function" &&
     typeof value.removeEventListener === "function"
   );
+}
+
+function assertJsonCompatible(value, path) {
+  if (value === null) {
+    return;
+  }
+
+  if (typeof value === "string" || typeof value === "boolean") {
+    return;
+  }
+
+  if (typeof value === "number") {
+    assert(Number.isFinite(value), `${path} must contain only finite numbers.`);
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertJsonCompatible(item, `${path}[${index}]`));
+    return;
+  }
+
+  if (isPlainObject(value)) {
+    Object.entries(value).forEach(([key, item]) => {
+      assert(typeof key === "string" && key.length > 0, `${path} keys must be non-empty strings.`);
+      assertJsonCompatible(item, `${path}.${key}`);
+    });
+    return;
+  }
+
+  throw new TypeError(`${path} must contain only JSON-compatible values.`);
 }
 
 export function validateTranslationRequest(request) {
@@ -60,6 +100,17 @@ export function validateTranslationRequest(request) {
 
   if (request.continuity !== undefined) {
     assert(isPlainObject(request.continuity), "TranslationRequest.continuity must be an object.");
+  }
+
+  if (request.context !== undefined) {
+    assert(isPlainObject(request.context), "TranslationRequest.context must be an object when provided.");
+    Object.keys(request.context).forEach((field) => {
+      assert(
+        TRANSLATION_CONTEXT_FIELDS.includes(field),
+        `TranslationRequest.context.${field} is not supported. Supported context fields: ${TRANSLATION_CONTEXT_FIELDS.join(", ")}.`
+      );
+      assertJsonCompatible(request.context[field], `TranslationRequest.context.${field}`);
+    });
   }
 
   if (request.timeoutMs !== undefined) {
