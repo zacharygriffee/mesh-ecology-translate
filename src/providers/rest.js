@@ -38,6 +38,35 @@ const INTENT_CLASS_SYNONYMS = new Map([
   ["readonly", "observe"],
   ["read", "observe"]
 ]);
+const CONTROL_ACTION_DEFAULTS = new Map([
+  [
+    "turn_off",
+    {
+      desiredState: "off",
+      successCriteria: "Target reports off state."
+    }
+  ],
+  [
+    "turn_on",
+    {
+      desiredState: "on",
+      successCriteria: "Target reports on state."
+    }
+  ]
+]);
+const ALLOWED_CONSEQUENCE_CLASSES = new Set([
+  "reversible_operational",
+  "informational",
+  "candidate_only",
+  "protected_operation"
+]);
+const ALLOWED_EXECUTION_MODES = new Set(["one_shot", "none"]);
+const ALLOWED_RESPONSIVENESS = new Set(["responsive", "deferred"]);
+const ALLOWED_SUCCESS_EVIDENCE_TYPES = new Set(["report", "candidate", "none"]);
+const ALLOWED_IDEMPOTENCY = new Set(["conditional", "idempotent", "not_applicable"]);
+const ALLOWED_AUDIENCES = new Set(["bounded", "operator"]);
+const ALLOWED_AUTHORITY_HINTS = new Set(["none"]);
+const ALLOWED_CAPABILITY_HINTS = new Set(["publish_candidate"]);
 
 const BLOCKED_EXTRA_BODY_FIELDS = new Set([
   "function_call",
@@ -55,9 +84,33 @@ const BLOCKED_EXTRA_BODY_FIELDS = new Set([
 const STRUCTURED_OUTPUT_SCHEMA = Object.freeze({
   grammarCandidate: {
     intentClass: PORTABLE_INTENT_CLASSES.join("|"),
-    target: "string|null",
+    target: {
+      actorGroup: "string|null",
+      selectedActorIds: [],
+      desiredState: "string|null"
+    },
     scope: "string|null",
     action: "string",
+    consequenceClass: "reversible_operational|informational|candidate_only|protected_operation",
+    execution: {
+      mode: "one_shot|none"
+    },
+    responsiveness: "responsive|deferred",
+    success: {
+      evidenceType: "report|candidate|none",
+      criteria: "string"
+    },
+    idempotency: "conditional|idempotent|not_applicable",
+    provenance: {
+      source: "translation_provider",
+      ingressType: "operator_input"
+    },
+    audience: "bounded|operator",
+    authorityHint: "none",
+    capabilityHints: ["publish_candidate"],
+    ambiguity: {
+      unresolvedFields: []
+    },
     parameters: {},
     rawInterpretation: "string"
   },
@@ -238,9 +291,12 @@ function buildRestMessages(prompt, { structuredOutput, structuredGrammarProfile 
         `Use the ${structuredGrammarProfile} portable grammar profile.`,
         "Return only JSON. No markdown. No prose. No reasoning text. No code fences.",
         `grammarCandidate.intentClass must be exactly one of: ${PORTABLE_INTENT_CLASSES.join(", ")}.`,
+        "grammarCandidate.target must be an object, never a string.",
         "Use control for device or environment control commands, including turning lights on or off.",
         "Use observe for status or read-only queries.",
-        "Use stable snake_case identifiers for grammarCandidate.target when a target is present.",
+        "Use stable snake_case identifiers in grammarCandidate.target.actorGroup when a target is present.",
+        "Do not invent selectedActorIds; use an empty array unless explicit context provides actor IDs.",
+        "Use authorityHint none and capabilityHints publish_candidate only.",
         "If the intent is unclear, use inform_operator or set needsClarification to true."
       ].join(" ")
     },
@@ -339,6 +395,207 @@ function normalizeStableTargetId(value) {
     .replace(/_+/g, "_");
 }
 
+function normalizeAction(value, provider) {
+  const action = normalizeIntentToken(value);
+
+  if (action.length === 0) {
+    throw createInvalidStructuredResponseError(provider, "grammarCandidate.action must be a non-empty string.");
+  }
+
+  return action;
+}
+
+function readOptionalString(value, path, provider) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  assertNonEmptyString(value, path, provider);
+  return value;
+}
+
+function normalizeStringEnum(value, { path, allowed, fallback, provider }) {
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+
+  assertNonEmptyString(value, path, provider);
+  const normalized = normalizeIntentToken(value);
+
+  if (!allowed.has(normalized)) {
+    throw createInvalidStructuredResponseError(
+      provider,
+      `${path} must be one of: ${Array.from(allowed).join(", ")}.`
+    );
+  }
+
+  return normalized;
+}
+
+function normalizeStringArray(value, { path, fallback = [], provider }) {
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+
+  assertStringArray(value, path, provider);
+  return value;
+}
+
+function normalizeTarget(value, { action, provider }) {
+  const actionDefaults = CONTROL_ACTION_DEFAULTS.get(action);
+
+  if (typeof value === "string") {
+    const actorGroup = normalizeStableTargetId(value);
+
+    if (actorGroup.length === 0) {
+      throw createInvalidStructuredResponseError(
+        provider,
+        "grammarCandidate.target must resolve to a non-empty object."
+      );
+    }
+
+    return {
+      target: {
+        actorGroup,
+        selectedActorIds: [],
+        ...(actionDefaults ? { desiredState: actionDefaults.desiredState } : {})
+      },
+      normalizedFrom: "string"
+    };
+  }
+
+  if (!isPlainObject(value)) {
+    throw createInvalidStructuredResponseError(provider, "grammarCandidate.target must be an object.");
+  }
+
+  const actorGroup =
+    value.actorGroup === undefined || value.actorGroup === null
+      ? null
+      : normalizeStableTargetId(value.actorGroup);
+
+  if (actorGroup !== null && actorGroup.length === 0) {
+    throw createInvalidStructuredResponseError(
+      provider,
+      "grammarCandidate.target.actorGroup must be a non-empty string or null."
+    );
+  }
+
+  const selectedActorIds = normalizeStringArray(value.selectedActorIds, {
+    path: "grammarCandidate.target.selectedActorIds",
+    fallback: [],
+    provider
+  });
+  const desiredState = readOptionalString(
+    value.desiredState ?? actionDefaults?.desiredState,
+    "grammarCandidate.target.desiredState",
+    provider
+  );
+
+  return {
+    target: {
+      actorGroup,
+      selectedActorIds,
+      ...(desiredState !== null ? { desiredState } : {})
+    },
+    normalizedFrom: null
+  };
+}
+
+function normalizeExecution(value, provider) {
+  if (value === undefined || value === null) {
+    return { mode: "one_shot" };
+  }
+
+  if (!isPlainObject(value)) {
+    throw createInvalidStructuredResponseError(provider, "grammarCandidate.execution must be an object.");
+  }
+
+  return {
+    mode: normalizeStringEnum(value.mode, {
+      path: "grammarCandidate.execution.mode",
+      allowed: ALLOWED_EXECUTION_MODES,
+      fallback: "one_shot",
+      provider
+    })
+  };
+}
+
+function normalizeSuccess(value, { action, provider }) {
+  const actionDefaults = CONTROL_ACTION_DEFAULTS.get(action);
+
+  if (value !== undefined && value !== null && !isPlainObject(value)) {
+    throw createInvalidStructuredResponseError(provider, "grammarCandidate.success must be an object.");
+  }
+
+  const success = value ?? {};
+
+  return {
+    evidenceType: normalizeStringEnum(success.evidenceType, {
+      path: "grammarCandidate.success.evidenceType",
+      allowed: ALLOWED_SUCCESS_EVIDENCE_TYPES,
+      fallback: "report",
+      provider
+    }),
+    criteria:
+      readOptionalString(success.criteria, "grammarCandidate.success.criteria", provider) ??
+      actionDefaults?.successCriteria ??
+      "Target reports requested state."
+  };
+}
+
+function normalizeProvenance(value, provider) {
+  if (value !== undefined && value !== null && !isPlainObject(value)) {
+    throw createInvalidStructuredResponseError(provider, "grammarCandidate.provenance must be an object.");
+  }
+
+  const provenance = value ?? {};
+
+  if (
+    provenance.source !== undefined &&
+    provenance.source !== "translation_provider"
+  ) {
+    throw createInvalidStructuredResponseError(
+      provider,
+      "grammarCandidate.provenance.source must be translation_provider."
+    );
+  }
+
+  if (
+    provenance.ingressType !== undefined &&
+    provenance.ingressType !== "operator_input"
+  ) {
+    throw createInvalidStructuredResponseError(
+      provider,
+      "grammarCandidate.provenance.ingressType must be operator_input."
+    );
+  }
+
+  return {
+    source: "translation_provider",
+    ingressType: "operator_input"
+  };
+}
+
+function normalizeAmbiguity(value, provider) {
+  if (value === undefined || value === null) {
+    return {
+      unresolvedFields: []
+    };
+  }
+
+  if (!isPlainObject(value)) {
+    throw createInvalidStructuredResponseError(provider, "grammarCandidate.ambiguity must be an object.");
+  }
+
+  return {
+    unresolvedFields: normalizeStringArray(value.unresolvedFields, {
+      path: "grammarCandidate.ambiguity.unresolvedFields",
+      fallback: [],
+      provider
+    })
+  };
+}
+
 function assertStringArray(value, path, provider) {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
     throw createInvalidStructuredResponseError(provider, `${path} must be an array of strings.`);
@@ -377,9 +634,20 @@ function parseStructuredOutput({
   }
 
   const normalizedIntent = normalizeIntentClass(parsed.grammarCandidate, provider);
-  assertNullableString(parsed.grammarCandidate.target, "grammarCandidate.target", provider);
-  assertNullableString(parsed.grammarCandidate.scope, "grammarCandidate.scope", provider);
+  if (parsed.grammarCandidate.target === undefined) {
+    throw createInvalidStructuredResponseError(provider, "grammarCandidate.target must be an object.");
+  }
+
+  const scope = readOptionalString(parsed.grammarCandidate.scope, "grammarCandidate.scope", provider);
   assertNonEmptyString(parsed.grammarCandidate.action, "grammarCandidate.action", provider);
+  const action = normalizeAction(parsed.grammarCandidate.action, provider);
+
+  if (normalizedIntent.intentClass === "control" && !CONTROL_ACTION_DEFAULTS.has(action)) {
+    throw createInvalidStructuredResponseError(
+      provider,
+      "grammarCandidate.action is not a supported control action."
+    );
+  }
 
   if (!isPlainObject(parsed.grammarCandidate.parameters)) {
     throw createInvalidStructuredResponseError(provider, "grammarCandidate.parameters must be an object.");
@@ -391,12 +659,66 @@ function parseStructuredOutput({
     provider
   );
 
-  const target = normalizeStableTargetId(parsed.grammarCandidate.target);
+  const normalizedTarget = normalizeTarget(parsed.grammarCandidate.target, {
+    action,
+    provider
+  });
+  const ambiguity = normalizeAmbiguity(parsed.grammarCandidate.ambiguity, provider);
 
-  if (parsed.grammarCandidate.target !== null && target.length === 0) {
+  if (
+    normalizedIntent.intentClass === "control" &&
+    normalizedTarget.target.selectedActorIds.length === 0 &&
+    !ambiguity.unresolvedFields.includes("target.selectedActorIds")
+  ) {
+    ambiguity.unresolvedFields.push("target.selectedActorIds");
+  }
+
+  const consequenceClass = normalizeStringEnum(parsed.grammarCandidate.consequenceClass, {
+    path: "grammarCandidate.consequenceClass",
+    allowed: ALLOWED_CONSEQUENCE_CLASSES,
+    fallback: normalizedIntent.intentClass === "control" ? "reversible_operational" : "candidate_only",
+    provider
+  });
+  const execution = normalizeExecution(parsed.grammarCandidate.execution, provider);
+  const responsiveness = normalizeStringEnum(parsed.grammarCandidate.responsiveness, {
+    path: "grammarCandidate.responsiveness",
+    allowed: ALLOWED_RESPONSIVENESS,
+    fallback: "responsive",
+    provider
+  });
+  const success = normalizeSuccess(parsed.grammarCandidate.success, {
+    action,
+    provider
+  });
+  const idempotency = normalizeStringEnum(parsed.grammarCandidate.idempotency, {
+    path: "grammarCandidate.idempotency",
+    allowed: ALLOWED_IDEMPOTENCY,
+    fallback: "conditional",
+    provider
+  });
+  const provenance = normalizeProvenance(parsed.grammarCandidate.provenance, provider);
+  const audience = normalizeStringEnum(parsed.grammarCandidate.audience, {
+    path: "grammarCandidate.audience",
+    allowed: ALLOWED_AUDIENCES,
+    fallback: "bounded",
+    provider
+  });
+  const authorityHint = normalizeStringEnum(parsed.grammarCandidate.authorityHint, {
+    path: "grammarCandidate.authorityHint",
+    allowed: ALLOWED_AUTHORITY_HINTS,
+    fallback: "none",
+    provider
+  });
+  const capabilityHints = normalizeStringArray(parsed.grammarCandidate.capabilityHints, {
+    path: "grammarCandidate.capabilityHints",
+    fallback: ["publish_candidate"],
+    provider
+  });
+
+  if (capabilityHints.some((hint) => !ALLOWED_CAPABILITY_HINTS.has(hint))) {
     throw createInvalidStructuredResponseError(
       provider,
-      "grammarCandidate.target must be a non-empty string or null."
+      `grammarCandidate.capabilityHints must contain only: ${Array.from(ALLOWED_CAPABILITY_HINTS).join(", ")}.`
     );
   }
 
@@ -425,15 +747,30 @@ function parseStructuredOutput({
       continuity: request.continuity ?? null,
       context: request.context ?? null,
       intentClass: normalizedIntent.intentClass,
-      target,
-      scope: parsed.grammarCandidate.scope,
-      action: parsed.grammarCandidate.action,
+      target: normalizedTarget.target,
+      scope,
+      action,
+      consequenceClass,
+      execution,
+      responsiveness,
+      success,
+      idempotency,
+      provenance,
+      audience,
+      authorityHint,
+      capabilityHints,
+      ambiguity,
       parameters: parsed.grammarCandidate.parameters,
       rawInterpretation: parsed.grammarCandidate.rawInterpretation,
       metadata: {
         structured: true,
         structuredGrammarProfile,
         rawGrammarCandidate: parsed.grammarCandidate,
+        ...(normalizedTarget.normalizedFrom
+          ? {
+              normalizedTargetFrom: normalizedTarget.normalizedFrom
+            }
+          : {}),
         ...(normalizedIntent.normalizedFrom
           ? {
               normalizedIntentClassFrom: normalizedIntent.normalizedFrom,

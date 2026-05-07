@@ -229,6 +229,10 @@ test("rest provider returns a valid structure with a mocked OpenAI-compatible re
   validateTranslationResult(result);
   assert.equal(result.providerInfo.provider, "rest");
   assert.equal(result.grammarCandidate.intentClass, "generate");
+  assert.deepEqual(result.grammarCandidate.target, {
+    actorGroup: "habitat_report",
+    selectedActorIds: []
+  });
   assert.equal(result.grammarCandidate.rawInterpretation, "Summarize the habitat report.");
   assert.equal(result.confidence, 0.88);
 });
@@ -270,8 +274,30 @@ test("rest provider emits portable control intentClass for yard lights command",
   validateTranslationResult(result);
   assert.equal(result.grammarCandidate.intentClass, "control");
   assert.equal(result.grammarCandidate.action, "turn_off");
-  assert.equal(result.grammarCandidate.target, "yard_lights");
+  assert.deepEqual(result.grammarCandidate.target, {
+    actorGroup: "yard_lights",
+    selectedActorIds: [],
+    desiredState: "off"
+  });
   assert.equal(result.grammarCandidate.scope, "all");
+  assert.equal(result.grammarCandidate.consequenceClass, "reversible_operational");
+  assert.deepEqual(result.grammarCandidate.execution, { mode: "one_shot" });
+  assert.equal(result.grammarCandidate.responsiveness, "responsive");
+  assert.deepEqual(result.grammarCandidate.success, {
+    evidenceType: "report",
+    criteria: "Target reports off state."
+  });
+  assert.equal(result.grammarCandidate.idempotency, "conditional");
+  assert.deepEqual(result.grammarCandidate.provenance, {
+    source: "translation_provider",
+    ingressType: "operator_input"
+  });
+  assert.equal(result.grammarCandidate.audience, "bounded");
+  assert.equal(result.grammarCandidate.authorityHint, "none");
+  assert.deepEqual(result.grammarCandidate.capabilityHints, ["publish_candidate"]);
+  assert.deepEqual(result.grammarCandidate.ambiguity, {
+    unresolvedFields: ["target.selectedActorIds"]
+  });
   assert.equal(result.confidence, 0.85);
 });
 
@@ -291,9 +317,11 @@ test("rest provider request body includes configured max_tokens and JSON respons
   assert.match(calls[0].body.messages[0].content, /No markdown/);
   assert.match(calls[0].body.messages[0].content, /No reasoning text/);
   assert.match(calls[0].body.messages[0].content, /intentClass/);
+  assert.match(calls[0].body.messages[0].content, /target must be an object/);
   assert.match(calls[0].body.messages[0].content, /control/);
   assert.match(calls[0].body.messages[0].content, /observe/);
-  assert.match(calls[0].body.messages[0].content, /snake_case/);
+  assert.match(calls[0].body.messages[0].content, /selectedActorIds/);
+  assert.match(calls[0].body.messages[0].content, /authorityHint none/);
   assert.match(calls[0].body.messages[1].content, /rawInterpretation/);
 });
 
@@ -477,9 +505,126 @@ test("rest provider normalizes device_control intent synonym to control", async 
 
   validateTranslationResult(result);
   assert.equal(result.grammarCandidate.intentClass, "control");
-  assert.equal(result.grammarCandidate.target, "yard_lights");
+  assert.deepEqual(result.grammarCandidate.target, {
+    actorGroup: "yard_lights",
+    selectedActorIds: [],
+    desiredState: "off"
+  });
   assert.equal(result.grammarCandidate.metadata.normalizedIntentClassFrom, "intent");
   assert.equal(result.grammarCandidate.metadata.rawIntentClass, "device_control");
+  assert.equal(result.grammarCandidate.metadata.normalizedTargetFrom, "string");
+});
+
+test("rest provider normalizes turn_on desired state and preserves empty actor ids", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                confidence: 0.9,
+                grammarCandidate: {
+                  intentClass: "control",
+                  action: "turn_on",
+                  target: "yard_lights",
+                  rawInterpretation: "Activate yard lighting devices"
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  const result = await provider.translate(createRequest({ provider: "rest", profile: "command" }));
+
+  assert.equal(result.grammarCandidate.intentClass, "control");
+  assert.deepEqual(result.grammarCandidate.target, {
+    actorGroup: "yard_lights",
+    selectedActorIds: [],
+    desiredState: "on"
+  });
+  assert.deepEqual(result.grammarCandidate.ambiguity.unresolvedFields, ["target.selectedActorIds"]);
+  assert.equal(result.grammarCandidate.success.criteria, "Target reports on state.");
+  assert.equal(result.confidence, 0.9);
+});
+
+test("rest provider preserves explicit object target without inventing actor ids", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                grammarCandidate: {
+                  intentClass: "control",
+                  action: "turn_off",
+                  target: {
+                    actorGroup: "yard_lights"
+                  },
+                  ambiguity: {
+                    unresolvedFields: ["target.selectedActorIds"]
+                  }
+                },
+                ambiguities: ["Concrete yard light actor ids were not provided."]
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  const result = await provider.translate(createRequest({ provider: "rest", profile: "command" }));
+
+  assert.deepEqual(result.grammarCandidate.target, {
+    actorGroup: "yard_lights",
+    selectedActorIds: [],
+    desiredState: "off"
+  });
+  assert.deepEqual(result.grammarCandidate.ambiguity.unresolvedFields, ["target.selectedActorIds"]);
+  assert.deepEqual(result.ambiguities, ["Concrete yard light actor ids were not provided."]);
+});
+
+test("rest provider rejects unsupported control actions", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                grammarCandidate: {
+                  intentClass: "control",
+                  action: "blink_lights",
+                  target: "yard_lights"
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  await assert.rejects(
+    () => provider.translate(createRequest({ provider: "rest", profile: "command" })),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /supported control action/);
+      return true;
+    }
+  );
 });
 
 test("rest provider normalizes status and read-only synonyms to observe", async () => {
@@ -841,6 +986,80 @@ test("rest provider rejects invalid structured confidence", async () => {
       return true;
     }
   );
+});
+
+test("rest provider rejects unsafe structured grammar fields", async () => {
+  const cases = [
+    {
+      label: "consequence",
+      grammarCandidate: {
+        consequenceClass: "irreversible_execution"
+      },
+      message: /consequenceClass/
+    },
+    {
+      label: "execution",
+      grammarCandidate: {
+        execution: {
+          mode: "continuous_agent"
+        }
+      },
+      message: /execution\.mode/
+    },
+    {
+      label: "success",
+      grammarCandidate: {
+        success: {
+          evidenceType: "completion_truth"
+        }
+      },
+      message: /success\.evidenceType/
+    },
+    {
+      label: "authority",
+      grammarCandidate: {
+        authorityHint: "authorized"
+      },
+      message: /authorityHint/
+    },
+    {
+      label: "capability",
+      grammarCandidate: {
+        capabilityHints: ["execute_action"]
+      },
+      message: /capabilityHints/
+    }
+  ];
+
+  for (const testCase of cases) {
+    const provider = new RestProvider({
+      baseUrl: "https://example.test/v1",
+      apiKey: "secret",
+      model: "remote-model",
+      fetchImpl: async () =>
+        createJsonResponse({
+          choices: [
+            {
+              message: {
+                content: createStructuredRestContent({
+                  grammarCandidate: testCase.grammarCandidate
+                })
+              }
+            }
+          ]
+        })
+    });
+
+    await assert.rejects(
+      () => provider.translate(createRequest({ provider: "rest" })),
+      (error) => {
+        assert(error instanceof ProviderError, testCase.label);
+        assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE, testCase.label);
+        assert.match(error.message, testCase.message, testCase.label);
+        return true;
+      }
+    );
+  }
 });
 
 test("ollama provider checks availability and returns a valid structure", async () => {
