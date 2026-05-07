@@ -9,13 +9,16 @@ export {
 } from "./contracts/index.js";
 export {
   CodexCliProvider,
+  DEFAULT_CODEX_CLI_COMMAND,
+  DEFAULT_CODEX_CLI_MODEL,
   DEFAULT_PROVIDER_TIMEOUT_MS,
   OllamaProvider,
   PROFILE_TEMPLATES,
   ProviderAdapter,
   RestProvider,
   buildPrompt,
-  buildTranslationResult
+  buildTranslationResult,
+  runCodexCliCommand
 } from "./providers/index.js";
 export {
   ProviderRouter,

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import test from "node:test";
 
 import { validateTranslationResult } from "../src/contracts/index.js";
@@ -112,6 +113,47 @@ function createCapturingRestProvider(options = {}) {
   return { calls, provider };
 }
 
+function createMockCodexRunner(options = {}) {
+  const calls = [];
+  const {
+    available = true,
+    outputContent = createStructuredRestContent(),
+    status = 0,
+    stdout = "",
+    stderr = "",
+    onExec
+  } = options;
+  const runner = async (invocation) => {
+    calls.push(invocation);
+
+    if (invocation.args.includes("--version")) {
+      return {
+        status: available ? 0 : 1,
+        stdout: available ? "codex-cli 0.128.0\n" : "",
+        stderr: available ? "" : "codex unavailable"
+      };
+    }
+
+    if (onExec) {
+      return onExec(invocation, calls);
+    }
+
+    const outputIndex = invocation.args.indexOf("--output-last-message");
+
+    if (outputContent !== undefined && outputIndex >= 0) {
+      await writeFile(invocation.args[outputIndex + 1], outputContent, "utf8");
+    }
+
+    return {
+      status,
+      stdout,
+      stderr
+    };
+  };
+
+  return { calls, runner };
+}
+
 async function withTemporaryEnv(values, callback) {
   const previous = Object.fromEntries(
     Object.keys(values).map((key) => [key, process.env[key]])
@@ -138,13 +180,72 @@ async function withTemporaryEnv(values, callback) {
   }
 }
 
-test("codex-cli provider returns a valid stubbed structure", async () => {
-  const provider = new CodexCliProvider();
-  const result = await provider.translate(createRequest());
+test("codex-cli provider returns a valid structured command result", async () => {
+  const { calls, runner } = createMockCodexRunner({
+    outputContent: createStructuredRestContent({
+      confidence: 0.92,
+      grammarCandidate: {
+        intentClass: "control",
+        action: "turn_off",
+        target: "yard lights",
+        scope: "yard",
+        idempotency: "repeatable",
+        rawInterpretation: "Deactivate all yard lighting devices"
+      }
+    })
+  });
+  const provider = new CodexCliProvider({
+    model: "gpt-5.4-codex",
+    cwd: "/workspace/translate",
+    runner
+  });
+  const result = await provider.translate(
+    createRequest({
+      inputs: [{ type: "text", content: "turn off all yard lights" }],
+      profile: "command"
+    })
+  );
 
   validateTranslationResult(result);
   assert.equal(result.providerInfo.provider, "codex-cli");
-  assert.equal(result.grammarCandidate.metadata.stub, true);
+  assert.equal(result.providerInfo.model, "gpt-5.4-codex");
+  assert.equal(result.confidence, 0.92);
+  assert.notEqual(result.confidence, 0.72);
+  assert.equal(result.grammarCandidate.intentClass, "control");
+  assert.equal(result.grammarCandidate.action, "turn_off");
+  assert.deepEqual(result.grammarCandidate.target, {
+    actorGroup: "yard_lights",
+    selectedActorIds: [],
+    desiredState: "off"
+  });
+  assert.deepEqual(result.grammarCandidate.scope, { area: "yard" });
+  assert.equal(result.grammarCandidate.idempotency, "conditional");
+
+  assert.equal(calls.length, 2);
+  const execCall = calls[1];
+  assert.equal(execCall.command, "codex");
+  assert.equal(execCall.args[0], "exec");
+  assert(execCall.args.includes("--sandbox"));
+  assert.equal(execCall.args[execCall.args.indexOf("--sandbox") + 1], "read-only");
+  assert(execCall.args.includes("--json"));
+  assert(execCall.args.includes("--color"));
+  assert.equal(execCall.args[execCall.args.indexOf("--color") + 1], "never");
+  assert(execCall.args.includes("--ephemeral"));
+  assert(execCall.args.includes("--output-last-message"));
+  assert(execCall.args.includes("--output-schema"));
+  assert(execCall.args.includes("--cd"));
+  assert.equal(execCall.args[execCall.args.indexOf("--cd") + 1], "/workspace/translate");
+  assert.equal(execCall.args.at(-1), "-");
+  assert(execCall.args.includes("--model"));
+  assert.equal(execCall.args[execCall.args.indexOf("--model") + 1], "gpt-5.4-codex");
+  assert(execCall.args.includes("-c"));
+  assert(execCall.args.includes('approval_policy="never"'));
+  assert.equal(execCall.args.includes("workspace-write"), false);
+  assert.equal(execCall.args.includes("danger-full-access"), false);
+  assert.equal(execCall.args.includes("--dangerously-bypass-approvals-and-sandbox"), false);
+  assert.match(execCall.input, /Return only valid JSON/);
+  assert.match(execCall.input, /No reasoning/);
+  assert.match(execCall.input, /target must be an object/);
 });
 
 test("prompt and grammar candidate include explicit context as translation input only", async () => {
@@ -156,13 +257,249 @@ test("prompt and grammar candidate include explicit context as translation input
     }
   });
   const prompt = buildPrompt(request);
-  const provider = new CodexCliProvider();
+  const { runner } = createMockCodexRunner();
+  const provider = new CodexCliProvider({ runner });
   const result = await provider.translate(request);
 
   assert.match(prompt.user, /Explicit context:/);
   assert.match(prompt.user, /habitat report/);
   assert.deepEqual(result.grammarCandidate.context, request.context);
 });
+
+test("codex-cli provider reports unavailable when the executable is missing", async () => {
+  const { runner } = createMockCodexRunner({ available: false });
+  const provider = new CodexCliProvider({ runner });
+
+  assert.equal(await provider.isAvailable(), false);
+  await assert.rejects(() => provider.translate(createRequest()), (error) => {
+    assert(error instanceof ProviderError);
+    assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_UNAVAILABLE);
+    return true;
+  });
+});
+
+test("codex-cli provider rejects malformed final output", async () => {
+  const { runner } = createMockCodexRunner({
+    outputContent: "not json VENICE_INFERENCE_KEY_TESTSECRET"
+  });
+  const provider = new CodexCliProvider({ runner });
+
+  await assert.rejects(
+    () => provider.translate(createRequest({ profile: "command" })),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /codex final message must be valid JSON/);
+      assert.match(error.message, /contentPrefix="not json \[REDACTED\]/);
+      assert.doesNotMatch(error.message, /VENICE_INFERENCE_KEY_TESTSECRET/);
+      return true;
+    }
+  );
+});
+
+test("codex-cli provider rejects free-text command output", async () => {
+  const { runner } = createMockCodexRunner({
+    outputContent: "Local interpretation"
+  });
+  const provider = new CodexCliProvider({ runner });
+
+  await assert.rejects(
+    () =>
+      provider.translate(
+        createRequest({
+          inputs: [{ type: "text", content: "turn off all yard lights" }],
+          profile: "command"
+        })
+      ),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /codex final message must be valid JSON/);
+      return true;
+    }
+  );
+});
+
+test("codex-cli provider rejects structured output missing required fields", async () => {
+  const { runner } = createMockCodexRunner({
+    outputContent: JSON.stringify({
+      grammarCandidate: {
+        intentClass: "control"
+      },
+      confidence: 0.8,
+      needsClarification: false,
+      ambiguities: [],
+      notes: []
+    })
+  });
+  const provider = new CodexCliProvider({ runner });
+
+  await assert.rejects(
+    () => provider.translate(createRequest({ profile: "command" })),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /grammarCandidate\.target/);
+      return true;
+    }
+  );
+});
+
+test("codex-cli provider rejects unsafe authority claims", async () => {
+  const { runner } = createMockCodexRunner({
+    outputContent: createStructuredRestContent({
+      grammarCandidate: {
+        authorityHint: "authorized"
+      }
+    })
+  });
+  const provider = new CodexCliProvider({ runner });
+
+  await assert.rejects(
+    () => provider.translate(createRequest()),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /authorityHint/);
+      return true;
+    }
+  );
+});
+
+test("codex-cli provider fails clearly on nonzero CLI exit", async () => {
+  const { runner } = createMockCodexRunner({
+    status: 2,
+    stderr: "not configured"
+  });
+  const provider = new CodexCliProvider({ runner });
+
+  await assert.rejects(
+    () => provider.translate(createRequest()),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_UNAVAILABLE);
+      assert.match(error.message, /status 2/);
+      assert.match(error.message, /not configured/);
+      return true;
+    }
+  );
+});
+
+test("codex-cli provider rejects missing final message file", async () => {
+  const { runner } = createMockCodexRunner({
+    onExec: async () => ({
+      status: 0,
+      stdout: "",
+      stderr: ""
+    })
+  });
+  const provider = new CodexCliProvider({ runner });
+
+  await assert.rejects(
+    () => provider.translate(createRequest()),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /did not write a final assistant message/);
+      return true;
+    }
+  );
+});
+
+test("codex-cli provider preserves timeout and cancellation signals", async () => {
+  let timeoutAbortObserved = false;
+  const timeoutRunner = async (invocation) => {
+    if (invocation.args.includes("--version")) {
+      return { status: 0, stdout: "codex-cli 0.128.0\n", stderr: "" };
+    }
+
+    return new Promise((resolve, reject) => {
+      invocation.signal.addEventListener(
+        "abort",
+        () => {
+          timeoutAbortObserved = true;
+          reject(new Error("aborted"));
+        },
+        { once: true }
+      );
+    });
+  };
+  const timeoutProvider = new CodexCliProvider({ runner: timeoutRunner });
+
+  await assert.rejects(
+    () => timeoutProvider.translate(createRequest({ timeoutMs: 10 })),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_TIMEOUT);
+      return true;
+    }
+  );
+  assert.equal(timeoutAbortObserved, true);
+
+  let cancellationAbortObserved = false;
+  const cancellationRunner = async (invocation) => {
+    if (invocation.args.includes("--version")) {
+      return { status: 0, stdout: "codex-cli 0.128.0\n", stderr: "" };
+    }
+
+    return new Promise((resolve, reject) => {
+      invocation.signal.addEventListener(
+        "abort",
+        () => {
+          cancellationAbortObserved = true;
+          reject(new Error("aborted"));
+        },
+        { once: true }
+      );
+    });
+  };
+  const cancellationProvider = new CodexCliProvider({ runner: cancellationRunner });
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 10);
+
+  await assert.rejects(
+    () =>
+      cancellationProvider.translate(
+        createRequest({
+          timeoutMs: 100,
+          signal: controller.signal
+        })
+      ),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.REQUEST_CANCELLED);
+      return true;
+    }
+  );
+  assert.equal(cancellationAbortObserved, true);
+});
+
+test(
+  "codex-cli live structured smoke test",
+  { skip: process.env.RUN_CODEX_CLI_LIVE_TESTS !== "1" },
+  async (t) => {
+    const provider = new CodexCliProvider();
+
+    if (!(await provider.isAvailable())) {
+      t.skip("codex executable is not available");
+      return;
+    }
+
+    const result = await provider.translate(
+      createRequest({
+        inputs: [{ type: "text", content: "turn off all yard lights" }],
+        profile: "command",
+        timeoutMs: 120000
+      })
+    );
+
+    validateTranslationResult(result);
+    assert.equal(result.providerInfo.provider, "codex-cli");
+    assert.equal(result.grammarCandidate.intentClass, "control");
+    assert.equal(result.grammarCandidate.action, "turn_off");
+    assert.equal(result.grammarCandidate.target.actorGroup, "yard_lights");
+  }
+);
 
 test("rest structured grammar has no Edge runtime dependency", () => {
   const restSource = readFileSync(new URL("../src/providers/rest.js", import.meta.url), "utf8");
@@ -1594,9 +1931,10 @@ test("ollama provider respects cancellation signals", async () => {
 });
 
 test("top-level translate validates the full request to result flow", async () => {
+  const { runner } = createMockCodexRunner();
   const result = await translate(createRequest(), {
     providers: {
-      "codex-cli": new CodexCliProvider()
+      "codex-cli": new CodexCliProvider({ runner })
     },
     defaultLocalProvider: "codex-cli",
     defaultRemoteProvider: "codex-cli"

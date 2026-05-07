@@ -70,7 +70,7 @@ Current providers:
 
 - `ollama`: local Ollama integration
 - `rest`: OpenAI-compatible REST APIs
-- `codex-cli`: stub adapter only
+- `codex-cli`: optional local Codex CLI integration
 
 Provider adapters must normalize raw model/provider output before returning. Command/profile providers should prefer structured JSON output; free-text command output is not a successful command result unless explicitly represented as clarification or error.
 
@@ -115,6 +115,9 @@ This package is library-shaped and expects configuration to be supplied by the c
 - REST structured prompts are compact by default: they include profile, security posture, input text, minimal explicit context, allowed enums, and the target schema instead of dumping full continuity or large control surfaces.
 - REST structured invalid-JSON errors include only a short redacted `message.content` prefix for provider debugging; request headers, API keys, and full prompts are not included.
 - Ollama structured output uses the same shared parser and normalizer as REST where practical, requests JSON from `/api/generate`, preserves validated model confidence, and blocks malformed/free-text command output instead of returning a hardcoded confidence.
+- Codex CLI output uses `codex exec --sandbox read-only --json --color never --ephemeral --output-last-message --output-schema`, reads the structured prompt from stdin, and parses the final assistant message through the shared structured normalizer.
+- Codex CLI requires a locally installed and configured `codex` executable. It is optional, explicit, and not required for CI; live tests run only with `RUN_CODEX_CLI_LIVE_TESTS=1`.
+- Codex CLI options can be supplied with `CODEX_CLI_COMMAND`, `CODEX_CLI_MODEL`, and `CODEX_CLI_STRUCTURED_GRAMMAR_PROFILE`, or by constructor options.
 - Future providers should use the shared structured parser/normalizer and add provider policy tests.
 
 ## Non-Goals

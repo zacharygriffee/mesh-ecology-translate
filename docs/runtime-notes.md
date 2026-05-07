@@ -11,4 +11,5 @@ Notes:
 - Consumers may cancel in-flight requests with `TranslationRequest.signal`.
 - Structured provider output is normalized through the portable provider contract before return.
 - Command/profile providers should not return free-text success results.
+- The Codex CLI provider is optional and requires a configured local `codex` executable. CI should use mocked runner tests; live Codex CLI tests are opt-in with `RUN_CODEX_CLI_LIVE_TESTS=1`.
 - See [Provider Policy](./provider-policy.md) for adapter requirements.

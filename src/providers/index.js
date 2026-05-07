@@ -9,7 +9,12 @@ export {
   REST_STRUCTURED_GRAMMAR_PROFILES,
   RestProvider
 } from "./rest.js";
-export { CodexCliProvider } from "./codex-cli.js";
+export {
+  CodexCliProvider,
+  DEFAULT_CODEX_CLI_COMMAND,
+  DEFAULT_CODEX_CLI_MODEL,
+  runCodexCliCommand
+} from "./codex-cli.js";
 export { DEFAULT_PROVIDER_TIMEOUT_MS } from "./runtime.js";
 export {
   DEFAULT_STRUCTURED_GRAMMAR_PROFILE,
