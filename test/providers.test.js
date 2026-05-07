@@ -267,11 +267,74 @@ test("rest provider only sends extra body fields when explicitly supplied", asyn
   assert.equal("stream" in explicitProvider.calls[0].body, false);
 });
 
-test("rest provider falls back to reasoning_content when content is empty", async () => {
+test("rest provider uses message content when reasoning_content is also present", async () => {
   const provider = new RestProvider({
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: "Final interpretation",
+              reasoning_content: "<think>private chain</think>\nReasoning interpretation"
+            }
+          }
+        ]
+      })
+  });
+
+  const result = await provider.translate(
+    createRequest({
+      provider: "rest"
+    })
+  );
+
+  validateTranslationResult(result);
+  assert.equal(result.grammarCandidate.interpretation, "Final interpretation");
+});
+
+test("rest provider ignores reasoning_content by default when content is empty", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: "",
+              reasoning_content: "<think>private chain</think>\nReasoning interpretation"
+            }
+          }
+        ]
+      })
+  });
+
+  await assert.rejects(
+    () =>
+      provider.translate(
+        createRequest({
+          provider: "rest"
+        })
+      ),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /message\.content translation text/);
+      return true;
+    }
+  );
+});
+
+test("rest provider can opt in to reasoning_content fallback", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    allowReasoningContentFallback: true,
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -382,7 +445,7 @@ test("rest provider times out with a classified error", async () => {
   );
 });
 
-test("rest provider rejects invalid empty responses with a classified error", async () => {
+test("rest provider rejects empty content without reasoning_content with a classified error", async () => {
   const provider = new RestProvider({
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
@@ -409,6 +472,7 @@ test("rest provider rejects invalid empty responses with a classified error", as
     (error) => {
       assert(error instanceof ProviderError);
       assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /message\.content translation text/);
       return true;
     }
   );

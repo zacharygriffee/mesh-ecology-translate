@@ -101,6 +101,7 @@ This package is library-shaped and expects configuration to be supplied by the c
 - REST request bodies include bounded OpenAI-compatible `max_tokens`; the default is `512` and can be overridden with `REST_MAX_TOKENS` or `RestProvider` options `maxTokens` / `max_tokens`.
 - REST `temperature` defaults to `0.2` and can be overridden with `REST_TEMPERATURE` or `RestProvider` option `temperature`.
 - REST provider-specific body fields are sent only through explicit `extraBodyFields` configuration. Tool/function/stream fields are filtered out.
+- REST output uses `message.content` as the translation text. `message.reasoning_content` is ignored by default and can only be used with explicit `allowReasoningContentFallback: true`.
 
 ## Non-Goals
 

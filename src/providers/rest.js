@@ -52,12 +52,16 @@ function flattenContent(content) {
     .trim();
 }
 
-function extractInterpretation(payload) {
+function extractInterpretation(payload, { allowReasoningContentFallback = false } = {}) {
   const choice = payload?.choices?.[0];
   const directContent = flattenContent(choice?.message?.content);
 
   if (directContent) {
     return directContent;
+  }
+
+  if (!allowReasoningContentFallback) {
+    return "";
   }
 
   const reasoningContent = flattenContent(choice?.message?.reasoning_content ?? choice?.reasoning_content);
@@ -118,6 +122,7 @@ export class RestProvider extends ProviderAdapter {
     this.maxTokens = readMaxTokens(options);
     this.temperature = readTemperature(options);
     this.extraBodyFields = readExtraBodyFields(options);
+    this.allowReasoningContentFallback = options.allowReasoningContentFallback === true;
   }
 
   async isAvailable() {
@@ -199,12 +204,16 @@ export class RestProvider extends ProviderAdapter {
           );
         }
 
-        const interpretation = normalizeProviderText(extractInterpretation(payload));
+        const interpretation = normalizeProviderText(
+          extractInterpretation(payload, {
+            allowReasoningContentFallback: this.allowReasoningContentFallback
+          })
+        );
 
         if (!interpretation) {
           throw createProviderInvalidResponseError(
             this.name,
-            "REST provider response did not contain usable translation text."
+            "REST provider response did not contain usable message.content translation text."
           );
         }
 
