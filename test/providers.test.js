@@ -2,7 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { validateTranslationResult } from "../src/contracts/index.js";
-import { buildPrompt, CodexCliProvider, OllamaProvider, RestProvider } from "../src/providers/index.js";
+import {
+  buildPrompt,
+  CodexCliProvider,
+  DEFAULT_REST_MAX_TOKENS,
+  OllamaProvider,
+  RestProvider
+} from "../src/providers/index.js";
 import { translate } from "../src/index.js";
 import { PROVIDER_ERROR_CODES, ProviderError } from "../src/errors/index.js";
 
@@ -49,6 +55,61 @@ function createAbortablePendingFetch() {
         { once: true }
       );
     });
+}
+
+function createCapturingRestProvider(options = {}) {
+  const calls = [];
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    ...options,
+    fetchImpl: async (url, fetchOptions = {}) => {
+      calls.push({
+        url,
+        options: fetchOptions,
+        body: JSON.parse(fetchOptions.body)
+      });
+
+      return createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: "Remote interpretation"
+            }
+          }
+        ]
+      });
+    }
+  });
+
+  return { calls, provider };
+}
+
+async function withTemporaryEnv(values, callback) {
+  const previous = Object.fromEntries(
+    Object.keys(values).map((key) => [key, process.env[key]])
+  );
+
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+
+  try {
+    return await callback();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
 }
 
 test("codex-cli provider returns a valid stubbed structure", async () => {
@@ -117,6 +178,93 @@ test("rest provider returns a valid structure with a mocked OpenAI-compatible re
 
   validateTranslationResult(result);
   assert.equal(result.providerInfo.provider, "rest");
+});
+
+test("rest provider request body includes configured max_tokens", async () => {
+  const { calls, provider } = createCapturingRestProvider({
+    maxTokens: 128
+  });
+
+  await provider.translate(createRequest({ provider: "rest" }));
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].body.max_tokens, 128);
+  assert.equal(calls[0].body.model, "remote-model");
+  assert.equal(calls[0].body.messages.length, 2);
+});
+
+test("rest provider uses default max_tokens when unset", async () =>
+  withTemporaryEnv(
+    {
+      REST_MAX_TOKENS: undefined,
+      REST_TEMPERATURE: undefined
+    },
+    async () => {
+      const { calls, provider } = createCapturingRestProvider();
+
+      await provider.translate(createRequest({ provider: "rest" }));
+
+      assert.equal(calls[0].body.max_tokens, DEFAULT_REST_MAX_TOKENS);
+    }
+  ));
+
+test("rest provider reads max_tokens and temperature overrides from env", async () =>
+  withTemporaryEnv(
+    {
+      REST_MAX_TOKENS: "256",
+      REST_TEMPERATURE: "0.35"
+    },
+    async () => {
+      const { calls, provider } = createCapturingRestProvider();
+
+      await provider.translate(createRequest({ provider: "rest" }));
+
+      assert.equal(calls[0].body.max_tokens, 256);
+      assert.equal(calls[0].body.temperature, 0.35);
+    }
+  ));
+
+test("rest provider supports max_tokens config alias over env", async () =>
+  withTemporaryEnv(
+    {
+      REST_MAX_TOKENS: "256"
+    },
+    async () => {
+      const { calls, provider } = createCapturingRestProvider({
+        max_tokens: 96
+      });
+
+      await provider.translate(createRequest({ provider: "rest" }));
+
+      assert.equal(calls[0].body.max_tokens, 96);
+    }
+  ));
+
+test("rest provider only sends extra body fields when explicitly supplied", async () => {
+  const defaultProvider = createCapturingRestProvider();
+
+  await defaultProvider.provider.translate(createRequest({ provider: "rest" }));
+
+  assert.equal("top_p" in defaultProvider.calls[0].body, false);
+  assert.equal("tools" in defaultProvider.calls[0].body, false);
+  assert.equal("functions" in defaultProvider.calls[0].body, false);
+  assert.equal("stream" in defaultProvider.calls[0].body, false);
+
+  const explicitProvider = createCapturingRestProvider({
+    extraBodyFields: {
+      top_p: 0.8,
+      tools: [{ type: "function" }],
+      function_call: "auto",
+      stream: true
+    }
+  });
+
+  await explicitProvider.provider.translate(createRequest({ provider: "rest" }));
+
+  assert.equal(explicitProvider.calls[0].body.top_p, 0.8);
+  assert.equal("tools" in explicitProvider.calls[0].body, false);
+  assert.equal("function_call" in explicitProvider.calls[0].body, false);
+  assert.equal("stream" in explicitProvider.calls[0].body, false);
 });
 
 test("rest provider falls back to reasoning_content when content is empty", async () => {

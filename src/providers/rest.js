@@ -8,6 +8,21 @@ import {
 import { normalizeProviderText } from "../normalize/index.js";
 import { executeWithRequestControl } from "./runtime.js";
 
+export const DEFAULT_REST_MAX_TOKENS = 512;
+export const DEFAULT_REST_TEMPERATURE = 0.2;
+
+const BLOCKED_EXTRA_BODY_FIELDS = new Set([
+  "function_call",
+  "functions",
+  "max_tokens",
+  "messages",
+  "model",
+  "stream",
+  "temperature",
+  "tool_choice",
+  "tools"
+]);
+
 function flattenContent(content) {
   if (typeof content === "string") {
     return content.trim();
@@ -54,6 +69,41 @@ function extractInterpretation(payload) {
   return "";
 }
 
+function readMaxTokens(options) {
+  const configured =
+    options.maxTokens ?? options.max_tokens ?? process.env.REST_MAX_TOKENS ?? DEFAULT_REST_MAX_TOKENS;
+  const parsed = Number(configured);
+
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return DEFAULT_REST_MAX_TOKENS;
+  }
+
+  return parsed;
+}
+
+function readTemperature(options) {
+  const configured = options.temperature ?? process.env.REST_TEMPERATURE ?? DEFAULT_REST_TEMPERATURE;
+  const parsed = Number(configured);
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_REST_TEMPERATURE;
+  }
+
+  return parsed;
+}
+
+function readExtraBodyFields(options) {
+  const extraBodyFields = options.extraBodyFields ?? {};
+
+  if (!extraBodyFields || typeof extraBodyFields !== "object" || Array.isArray(extraBodyFields)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(extraBodyFields).filter(([key]) => !BLOCKED_EXTRA_BODY_FIELDS.has(key))
+  );
+}
+
 export class RestProvider extends ProviderAdapter {
   constructor(options = {}) {
     super({
@@ -65,6 +115,9 @@ export class RestProvider extends ProviderAdapter {
     this.baseUrl = options.baseUrl ?? process.env.REST_BASE_URL ?? "";
     this.apiKey = options.apiKey ?? process.env.REST_API_KEY ?? "";
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    this.maxTokens = readMaxTokens(options);
+    this.temperature = readTemperature(options);
+    this.extraBodyFields = readExtraBodyFields(options);
   }
 
   async isAvailable() {
@@ -98,7 +151,8 @@ export class RestProvider extends ProviderAdapter {
             },
             body: JSON.stringify({
               model: this.model,
-              temperature: 0.2,
+              max_tokens: this.maxTokens,
+              temperature: this.temperature,
               messages: [
                 {
                   role: "system",
@@ -108,7 +162,8 @@ export class RestProvider extends ProviderAdapter {
                   role: "user",
                   content: prompt.user
                 }
-              ]
+              ],
+              ...this.extraBodyFields
             }),
             signal
           });

@@ -97,6 +97,10 @@ This package is library-shaped and expects configuration to be supplied by the c
 - It does not auto-load `.env` files.
 - Environment values must already be present in `process.env`, or provider options must be supplied directly when constructing adapters or routers.
 - The default provider timeout is `30000ms`, which can be overridden per request with `timeoutMs`.
+- REST providers use `REST_BASE_URL`, `REST_API_KEY`, and `REST_MODEL`.
+- REST request bodies include bounded OpenAI-compatible `max_tokens`; the default is `512` and can be overridden with `REST_MAX_TOKENS` or `RestProvider` options `maxTokens` / `max_tokens`.
+- REST `temperature` defaults to `0.2` and can be overridden with `REST_TEMPERATURE` or `RestProvider` option `temperature`.
+- REST provider-specific body fields are sent only through explicit `extraBodyFields` configuration. Tool/function/stream fields are filtered out.
 
 ## Non-Goals
 
