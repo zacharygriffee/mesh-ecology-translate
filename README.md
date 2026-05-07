@@ -107,6 +107,7 @@ This package is library-shaped and expects configuration to be supplied by the c
 - REST structured grammar defaults to the provider-neutral `portable_v1` profile. `structuredGrammarProfile` or `REST_STRUCTURED_GRAMMAR_PROFILE` can select `portable_v1` or `edge_v1`; both use the safe `intentClass` enum: `control`, `observe`, `generate`, `transform`, `deliver`, `share_candidate`, `inform_operator`, and `protected_operation`.
 - REST structured normalization maps explicit synonyms such as `device_control` to `control`, `status` / `read-only` to `observe`, and simple targets like `yard lights` to object-shaped targets such as `{ actorGroup: "yard_lights", selectedActorIds: [] }`.
 - REST structured control normalization handles known safe actions such as `turn_off` / `turn_on`, adds bounded grammar defaults such as `execution.mode: "one_shot"` and `authorityHint: "none"`, and never invents concrete actor IDs.
+- REST structured normalization maps flat scope strings to object scope, for example `"yard"` to `{ area: "yard" }`, and normalizes idempotency synonyms such as `idempotent` / `repeatable` to `conditional`.
 - REST structured prompts are compact by default: they include profile, security posture, input text, minimal explicit context, allowed enums, and the target schema instead of dumping full continuity or large control surfaces.
 - REST structured invalid-JSON errors include only a short redacted `message.content` prefix for provider debugging; request headers, API keys, and full prompts are not included.
 

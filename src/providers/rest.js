@@ -63,7 +63,11 @@ const ALLOWED_CONSEQUENCE_CLASSES = new Set([
 const ALLOWED_EXECUTION_MODES = new Set(["one_shot", "none"]);
 const ALLOWED_RESPONSIVENESS = new Set(["responsive", "deferred"]);
 const ALLOWED_SUCCESS_EVIDENCE_TYPES = new Set(["report", "candidate", "none"]);
-const ALLOWED_IDEMPOTENCY = new Set(["conditional", "idempotent", "not_applicable"]);
+const ALLOWED_IDEMPOTENCY = new Set(["conditional", "not_applicable"]);
+const IDEMPOTENCY_SYNONYMS = new Map([
+  ["idempotent", "conditional"],
+  ["repeatable", "conditional"]
+]);
 const ALLOWED_AUDIENCES = new Set(["bounded", "operator"]);
 const ALLOWED_AUTHORITY_HINTS = new Set(["none"]);
 const ALLOWED_CAPABILITY_HINTS = new Set(["publish_candidate"]);
@@ -89,7 +93,9 @@ const STRUCTURED_OUTPUT_SCHEMA = Object.freeze({
       selectedActorIds: [],
       desiredState: "string|null"
     },
-    scope: "string|null",
+    scope: {
+      area: "string|null"
+    },
     action: "string",
     consequenceClass: "reversible_operational|informational|candidate_only|protected_operation",
     execution: {
@@ -100,7 +106,7 @@ const STRUCTURED_OUTPUT_SCHEMA = Object.freeze({
       evidenceType: "report|candidate|none",
       criteria: "string"
     },
-    idempotency: "conditional|idempotent|not_applicable",
+    idempotency: "conditional|not_applicable",
     provenance: {
       source: "translation_provider",
       ingressType: "operator_input"
@@ -365,6 +371,8 @@ function buildStructuredRestMessages(request, { structuredGrammarProfile }) {
         "Return only valid JSON. No markdown. No prose. No code fences. No reasoning. No explanations.",
         `intentClass enum: ${PORTABLE_INTENT_CLASSES.join(", ")}.`,
         "target must be an object. Do not invent selectedActorIds.",
+        "scope must be an object or null, never a string.",
+        "Yard-lights example: target {\"actorGroup\":\"yard_lights\",\"selectedActorIds\":[],\"desiredState\":\"off\"}; scope {\"area\":\"yard\"}; idempotency \"conditional\".",
         "authorityHint must be none. capabilityHints must contain only publish_candidate."
       ].join(" ")
     },
@@ -519,6 +527,28 @@ function normalizeStringEnum(value, { path, allowed, fallback, provider }) {
   return normalized;
 }
 
+function normalizeIdempotency(value, provider) {
+  if (value === undefined || value === null) {
+    return "conditional";
+  }
+
+  assertNonEmptyString(value, "grammarCandidate.idempotency", provider);
+  const normalized = normalizeIntentToken(value);
+
+  if (IDEMPOTENCY_SYNONYMS.has(normalized)) {
+    return IDEMPOTENCY_SYNONYMS.get(normalized);
+  }
+
+  if (ALLOWED_IDEMPOTENCY.has(normalized)) {
+    return normalized;
+  }
+
+  throw createInvalidStructuredResponseError(
+    provider,
+    `grammarCandidate.idempotency must be one of: ${Array.from(ALLOWED_IDEMPOTENCY).join(", ")}.`
+  );
+}
+
 function normalizeStringArray(value, { path, fallback = [], provider }) {
   if (value === undefined || value === null) {
     return fallback;
@@ -526,6 +556,42 @@ function normalizeStringArray(value, { path, fallback = [], provider }) {
 
   assertStringArray(value, path, provider);
   return value;
+}
+
+function normalizeScope(value, provider) {
+  if (value === undefined || value === null) {
+    return {
+      scope: null,
+      normalizedFrom: null
+    };
+  }
+
+  if (typeof value === "string") {
+    const area = normalizeStableTargetId(value);
+
+    if (area.length === 0) {
+      throw createInvalidStructuredResponseError(
+        provider,
+        "grammarCandidate.scope must be an object or null."
+      );
+    }
+
+    return {
+      scope: {
+        area
+      },
+      normalizedFrom: "string"
+    };
+  }
+
+  if (!isPlainObject(value)) {
+    throw createInvalidStructuredResponseError(provider, "grammarCandidate.scope must be an object or null.");
+  }
+
+  return {
+    scope: compactJsonValue(value),
+    normalizedFrom: null
+  };
 }
 
 function normalizeTarget(value, { action, provider }) {
@@ -736,7 +802,7 @@ function parseStructuredOutput({
     throw createInvalidStructuredResponseError(provider, "grammarCandidate.target must be an object.");
   }
 
-  const scope = readOptionalString(parsed.grammarCandidate.scope, "grammarCandidate.scope", provider);
+  const normalizedScope = normalizeScope(parsed.grammarCandidate.scope, provider);
   assertNonEmptyString(parsed.grammarCandidate.action, "grammarCandidate.action", provider);
   const action = normalizeAction(parsed.grammarCandidate.action, provider);
 
@@ -788,12 +854,7 @@ function parseStructuredOutput({
     action,
     provider
   });
-  const idempotency = normalizeStringEnum(parsed.grammarCandidate.idempotency, {
-    path: "grammarCandidate.idempotency",
-    allowed: ALLOWED_IDEMPOTENCY,
-    fallback: "conditional",
-    provider
-  });
+  const idempotency = normalizeIdempotency(parsed.grammarCandidate.idempotency, provider);
   const provenance = normalizeProvenance(parsed.grammarCandidate.provenance, provider);
   const audience = normalizeStringEnum(parsed.grammarCandidate.audience, {
     path: "grammarCandidate.audience",
@@ -846,7 +907,7 @@ function parseStructuredOutput({
       context: request.context ?? null,
       intentClass: normalizedIntent.intentClass,
       target: normalizedTarget.target,
-      scope,
+      ...(normalizedScope.scope !== null ? { scope: normalizedScope.scope } : {}),
       action,
       consequenceClass,
       execution,
@@ -867,6 +928,11 @@ function parseStructuredOutput({
         ...(normalizedTarget.normalizedFrom
           ? {
               normalizedTargetFrom: normalizedTarget.normalizedFrom
+            }
+          : {}),
+        ...(normalizedScope.normalizedFrom
+          ? {
+              normalizedScopeFrom: normalizedScope.normalizedFrom
             }
           : {}),
         ...(normalizedIntent.normalizedFrom

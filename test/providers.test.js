@@ -253,7 +253,7 @@ test("rest provider emits portable control intentClass for yard lights command",
                   intentClass: "control",
                   action: "turn_off",
                   target: "yard lights",
-                  scope: "all",
+                  scope: "yard",
                   rawInterpretation: "Deactivate all yard lighting devices"
                 }
               })
@@ -279,7 +279,7 @@ test("rest provider emits portable control intentClass for yard lights command",
     selectedActorIds: [],
     desiredState: "off"
   });
-  assert.equal(result.grammarCandidate.scope, "all");
+  assert.deepEqual(result.grammarCandidate.scope, { area: "yard" });
   assert.equal(result.grammarCandidate.consequenceClass, "reversible_operational");
   assert.deepEqual(result.grammarCandidate.execution, { mode: "one_shot" });
   assert.equal(result.grammarCandidate.responsiveness, "responsive");
@@ -319,6 +319,8 @@ test("rest provider request body includes configured max_tokens and JSON respons
   assert.match(calls[0].body.messages[0].content, /No explanations/);
   assert.match(calls[0].body.messages[0].content, /intentClass/);
   assert.match(calls[0].body.messages[0].content, /target must be an object/);
+  assert.match(calls[0].body.messages[0].content, /scope must be an object or null/);
+  assert.match(calls[0].body.messages[0].content, /idempotency "conditional"/);
   assert.match(calls[0].body.messages[0].content, /control/);
   assert.match(calls[0].body.messages[0].content, /observe/);
   assert.match(calls[0].body.messages[0].content, /selectedActorIds/);
@@ -627,6 +629,179 @@ test("rest provider preserves explicit object target without inventing actor ids
   });
   assert.deepEqual(result.grammarCandidate.ambiguity.unresolvedFields, ["target.selectedActorIds"]);
   assert.deepEqual(result.ambiguities, ["Concrete yard light actor ids were not provided."]);
+});
+
+test("rest provider normalizes string scope to object scope", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                grammarCandidate: {
+                  intentClass: "control",
+                  action: "turn_off",
+                  target: "yard_lights",
+                  scope: "front yard"
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  const result = await provider.translate(createRequest({ provider: "rest", profile: "command" }));
+
+  assert.deepEqual(result.grammarCandidate.scope, { area: "front_yard" });
+  assert.equal(result.grammarCandidate.metadata.normalizedScopeFrom, "string");
+});
+
+test("rest provider passes object scope through", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                grammarCandidate: {
+                  scope: {
+                    area: "yard",
+                    zone: "north"
+                  }
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  const result = await provider.translate(createRequest({ provider: "rest" }));
+
+  assert.deepEqual(result.grammarCandidate.scope, {
+    area: "yard",
+    zone: "north"
+  });
+});
+
+test("rest provider rejects invalid non-object scope", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                grammarCandidate: {
+                  scope: ["yard"]
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  await assert.rejects(
+    () => provider.translate(createRequest({ provider: "rest" })),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /scope must be an object or null/);
+      return true;
+    }
+  );
+});
+
+test("rest provider normalizes idempotency synonyms to conditional", async () => {
+  const idempotentProvider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                grammarCandidate: {
+                  idempotency: "idempotent"
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+  const repeatableProvider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                grammarCandidate: {
+                  idempotency: "repeatable"
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  const idempotentResult = await idempotentProvider.translate(createRequest({ provider: "rest" }));
+  const repeatableResult = await repeatableProvider.translate(createRequest({ provider: "rest" }));
+
+  assert.equal(idempotentResult.grammarCandidate.idempotency, "conditional");
+  assert.equal(repeatableResult.grammarCandidate.idempotency, "conditional");
+});
+
+test("rest provider rejects unknown idempotency", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                grammarCandidate: {
+                  idempotency: "always_safe"
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  await assert.rejects(
+    () => provider.translate(createRequest({ provider: "rest" })),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /idempotency/);
+      return true;
+    }
+  );
 });
 
 test("rest provider rejects unsupported control actions", async () => {
