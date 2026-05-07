@@ -313,16 +313,52 @@ test("rest provider request body includes configured max_tokens and JSON respons
   assert.equal(calls[0].body.model, "remote-model");
   assert.equal(calls[0].body.messages.length, 2);
   assert.deepEqual(calls[0].body.response_format, { type: "json_object" });
-  assert.match(calls[0].body.messages[0].content, /Return only JSON/);
+  assert.match(calls[0].body.messages[0].content, /Return only valid JSON/);
   assert.match(calls[0].body.messages[0].content, /No markdown/);
-  assert.match(calls[0].body.messages[0].content, /No reasoning text/);
+  assert.match(calls[0].body.messages[0].content, /No reasoning/);
+  assert.match(calls[0].body.messages[0].content, /No explanations/);
   assert.match(calls[0].body.messages[0].content, /intentClass/);
   assert.match(calls[0].body.messages[0].content, /target must be an object/);
   assert.match(calls[0].body.messages[0].content, /control/);
   assert.match(calls[0].body.messages[0].content, /observe/);
   assert.match(calls[0].body.messages[0].content, /selectedActorIds/);
-  assert.match(calls[0].body.messages[0].content, /authorityHint none/);
+  assert.match(calls[0].body.messages[0].content, /authorityHint must be none/);
   assert.match(calls[0].body.messages[1].content, /rawInterpretation/);
+});
+
+test("rest provider structured prompt is compact and omits giant continuity dumps", async () => {
+  const giantContinuity = "GIANT_CONTINUITY_MARKER ".repeat(200);
+  const giantContext = "GIANT_CONTEXT_MARKER ".repeat(200);
+  const { calls, provider } = createCapturingRestProvider();
+
+  await provider.translate(
+    createRequest({
+      provider: "rest",
+      continuity: {
+        summary: giantContinuity
+      },
+      context: {
+        operatorFocus: giantContext,
+        activeReferents: [
+          {
+            id: "yard-1",
+            verboseSurface: giantContext
+          }
+        ],
+        portalVisibility: {
+          largeSurface: giantContext
+        }
+      }
+    })
+  );
+
+  const messages = calls[0].body.messages.map((message) => message.content).join("\n");
+
+  assert.equal(messages.includes("GIANT_CONTINUITY_MARKER"), false);
+  assert.equal(messages.includes("portalVisibility"), false);
+  assert.match(messages, /operatorFocus/);
+  assert.match(messages, /yard-1/);
+  assert(messages.length < 6000);
 });
 
 test("rest provider uses default max_tokens when unset", async () =>
@@ -833,14 +869,16 @@ test("rest provider preserves model-returned confidence above edge intake thresh
 test("rest provider rejects invalid JSON content with a classified error", async () => {
   const provider = new RestProvider({
     baseUrl: "https://example.test/v1",
-    apiKey: "secret",
+    apiKey: "VENICE_INFERENCE_KEY_TESTSECRET",
     model: "remote-model",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
           {
             message: {
-              content: "not json"
+              content:
+                "not json VENICE_INFERENCE_KEY_TESTSECRET " +
+                "x".repeat(250)
             }
           }
         ]
@@ -853,6 +891,38 @@ test("rest provider rejects invalid JSON content with a classified error", async
       assert(error instanceof ProviderError);
       assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
       assert.match(error.message, /valid JSON/);
+      assert.match(error.message, /contentPrefix="not json \[REDACTED\]/);
+      assert.doesNotMatch(error.message, /VENICE_INFERENCE_KEY_TESTSECRET/);
+      assert(error.message.length < 320);
+      return true;
+    }
+  );
+});
+
+test("rest provider rejects fenced JSON content without broad repair", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: `\`\`\`json\n${createStructuredRestContent()}\n\`\`\``
+            }
+          }
+        ]
+      })
+  });
+
+  await assert.rejects(
+    () => provider.translate(createRequest({ provider: "rest" })),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /valid JSON/);
+      assert.match(error.message, /```json/);
       return true;
     }
   );

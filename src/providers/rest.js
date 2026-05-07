@@ -119,6 +119,9 @@ const STRUCTURED_OUTPUT_SCHEMA = Object.freeze({
   ambiguities: [],
   notes: []
 });
+const REDACTED_CONTENT_PREFIX_LENGTH = 160;
+const COMPACT_CONTEXT_STRING_LIMIT = 240;
+const COMPACT_CONTEXT_ARRAY_LIMIT = 8;
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -269,7 +272,116 @@ function readStructuredGrammarProfile(options) {
     : DEFAULT_REST_STRUCTURED_GRAMMAR_PROFILE;
 }
 
-function buildRestMessages(prompt, { structuredOutput, structuredGrammarProfile }) {
+function truncateCompactString(value) {
+  if (value.length <= COMPACT_CONTEXT_STRING_LIMIT) {
+    return value;
+  }
+
+  return `${value.slice(0, COMPACT_CONTEXT_STRING_LIMIT)}...`;
+}
+
+function compactJsonValue(value, depth = 0) {
+  if (value === null || typeof value === "boolean" || typeof value === "number") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return truncateCompactString(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, COMPACT_CONTEXT_ARRAY_LIMIT).map((item) => compactJsonValue(item, depth + 1));
+  }
+
+  if (!isPlainObject(value)) {
+    return undefined;
+  }
+
+  if (depth >= 2) {
+    if (typeof value.id === "string") {
+      return { id: truncateCompactString(value.id) };
+    }
+
+    if (typeof value.name === "string") {
+      return { name: truncateCompactString(value.name) };
+    }
+
+    return undefined;
+  }
+
+  const compactEntries = Object.entries(value)
+    .map(([key, item]) => [key, compactJsonValue(item, depth + 1)])
+    .filter(([, item]) => item !== undefined);
+
+  return Object.fromEntries(compactEntries);
+}
+
+function buildCompactStructuredContext(context) {
+  if (!isPlainObject(context)) {
+    return null;
+  }
+
+  const compact = {};
+
+  if (context.operatorFocus !== undefined) {
+    compact.operatorFocus = compactJsonValue(context.operatorFocus);
+  }
+
+  if (Array.isArray(context.activeReferents)) {
+    compact.activeReferents = context.activeReferents
+      .slice(0, COMPACT_CONTEXT_ARRAY_LIMIT)
+      .map((referent) => {
+        if (!isPlainObject(referent)) {
+          return compactJsonValue(referent);
+        }
+
+        return Object.fromEntries(
+          ["id", "type", "name", "label", "actorGroup", "selectedActorIds"]
+            .filter((key) => referent[key] !== undefined)
+            .map((key) => [key, compactJsonValue(referent[key])])
+        );
+      });
+  }
+
+  for (const key of ["ambiguityMarkers", "reasonReferences", "evidenceReferences"]) {
+    if (context[key] !== undefined) {
+      compact[key] = compactJsonValue(context[key]);
+    }
+  }
+
+  return Object.keys(compact).length > 0 ? compact : null;
+}
+
+function buildStructuredRestMessages(request, { structuredGrammarProfile }) {
+  const compactContext = buildCompactStructuredContext(request.context);
+  const schema = JSON.stringify(STRUCTURED_OUTPUT_SCHEMA);
+
+  return [
+    {
+      role: "system",
+      content: [
+        "You translate operator input into a provider-neutral portable grammar candidate.",
+        `Profile: ${structuredGrammarProfile}.`,
+        "Return only valid JSON. No markdown. No prose. No code fences. No reasoning. No explanations.",
+        `intentClass enum: ${PORTABLE_INTENT_CLASSES.join(", ")}.`,
+        "target must be an object. Do not invent selectedActorIds.",
+        "authorityHint must be none. capabilityHints must contain only publish_candidate."
+      ].join(" ")
+    },
+    {
+      role: "user",
+      content: [
+        `profile: ${request.profile}`,
+        `securityPosture: ${request.securityPosture}`,
+        `input: ${extractPrimaryText(request)}`,
+        `context: ${compactContext ? JSON.stringify(compactContext) : "none"}`,
+        `schema: ${schema}`
+      ].join("\n")
+    }
+  ];
+}
+
+function buildRestMessages(prompt, { structuredOutput, structuredGrammarProfile, request }) {
   if (!structuredOutput) {
     return [
       {
@@ -283,32 +395,7 @@ function buildRestMessages(prompt, { structuredOutput, structuredGrammarProfile 
     ];
   }
 
-  return [
-    {
-      role: "system",
-      content: [
-        prompt.system,
-        `Use the ${structuredGrammarProfile} portable grammar profile.`,
-        "Return only JSON. No markdown. No prose. No reasoning text. No code fences.",
-        `grammarCandidate.intentClass must be exactly one of: ${PORTABLE_INTENT_CLASSES.join(", ")}.`,
-        "grammarCandidate.target must be an object, never a string.",
-        "Use control for device or environment control commands, including turning lights on or off.",
-        "Use observe for status or read-only queries.",
-        "Use stable snake_case identifiers in grammarCandidate.target.actorGroup when a target is present.",
-        "Do not invent selectedActorIds; use an empty array unless explicit context provides actor IDs.",
-        "Use authorityHint none and capabilityHints publish_candidate only.",
-        "If the intent is unclear, use inform_operator or set needsClarification to true."
-      ].join(" ")
-    },
-    {
-      role: "user",
-      content: [
-        prompt.user,
-        "Return exactly one JSON object matching this shape:",
-        JSON.stringify(STRUCTURED_OUTPUT_SCHEMA, null, 2)
-      ].join("\n\n")
-    }
-  ];
+  return buildStructuredRestMessages(request, { structuredGrammarProfile });
 }
 
 function createInvalidStructuredResponseError(provider, message) {
@@ -602,6 +689,14 @@ function assertStringArray(value, path, provider) {
   }
 }
 
+function createRedactedContentPrefix(content) {
+  return content
+    .slice(0, REDACTED_CONTENT_PREFIX_LENGTH)
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]")
+    .replace(/VENICE_[A-Z0-9_]+_[A-Za-z0-9._~+/=-]+/g, "[REDACTED]")
+    .replace(/sk-[A-Za-z0-9._~+/=-]+/g, "sk-[REDACTED]");
+}
+
 function parseStructuredOutput({
   payload,
   request,
@@ -622,7 +717,10 @@ function parseStructuredOutput({
   try {
     parsed = JSON.parse(content);
   } catch (error) {
-    throw createInvalidStructuredResponseError(provider, "message.content must be valid JSON.");
+    throw createInvalidStructuredResponseError(
+      provider,
+      `message.content must be valid JSON. contentPrefix=${JSON.stringify(createRedactedContentPrefix(content))}.`
+    );
   }
 
   if (!isPlainObject(parsed)) {
@@ -840,7 +938,8 @@ export class RestProvider extends ProviderAdapter {
             temperature: this.temperature,
             messages: buildRestMessages(prompt, {
               structuredOutput: this.structuredOutput,
-              structuredGrammarProfile: this.structuredGrammarProfile
+              structuredGrammarProfile: this.structuredGrammarProfile,
+              request
             }),
             ...(this.structuredOutput ? { response_format: this.responseFormat } : {}),
             ...this.extraBodyFields
