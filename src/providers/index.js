@@ -11,3 +11,11 @@ export {
 } from "./rest.js";
 export { CodexCliProvider } from "./codex-cli.js";
 export { DEFAULT_PROVIDER_TIMEOUT_MS } from "./runtime.js";
+export {
+  DEFAULT_STRUCTURED_GRAMMAR_PROFILE,
+  STRUCTURED_GRAMMAR_PROFILES,
+  STRUCTURED_OUTPUT_SCHEMA,
+  buildStructuredProviderMessages,
+  buildStructuredProviderPrompt,
+  parseStructuredProviderOutput
+} from "./structured.js";

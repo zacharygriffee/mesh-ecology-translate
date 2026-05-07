@@ -9,4 +9,6 @@ Notes:
 - Consumers may pass provider options directly when constructing adapters or routers.
 - Provider calls use a default timeout of `30000ms` unless `TranslationRequest.timeoutMs` overrides it.
 - Consumers may cancel in-flight requests with `TranslationRequest.signal`.
-- Output normalization is conservative and currently strips obvious reasoning wrappers such as `<think>...</think>`.
+- Structured provider output is normalized through the portable provider contract before return.
+- Command/profile providers should not return free-text success results.
+- See [Provider Policy](./provider-policy.md) for adapter requirements.

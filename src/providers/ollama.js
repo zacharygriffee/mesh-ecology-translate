@@ -1,12 +1,28 @@
-import { ProviderAdapter, buildPrompt, buildTranslationResult, readErrorBody } from "./base.js";
+import { ProviderAdapter, buildPrompt, readErrorBody } from "./base.js";
 import { validateTranslationRequest } from "../contracts/index.js";
 import {
   createProviderInvalidResponseError,
   createProviderUnavailableError,
   isProviderError
 } from "../errors/index.js";
-import { normalizeProviderText } from "../normalize/index.js";
 import { executeWithRequestControl } from "./runtime.js";
+import {
+  DEFAULT_STRUCTURED_GRAMMAR_PROFILE,
+  STRUCTURED_GRAMMAR_PROFILES,
+  buildStructuredProviderPrompt,
+  parseStructuredProviderOutput
+} from "./structured.js";
+
+function readStructuredGrammarProfile(options) {
+  const configured =
+    options.structuredGrammarProfile ??
+    process.env.OLLAMA_STRUCTURED_GRAMMAR_PROFILE ??
+    DEFAULT_STRUCTURED_GRAMMAR_PROFILE;
+
+  return STRUCTURED_GRAMMAR_PROFILES.includes(configured)
+    ? configured
+    : DEFAULT_STRUCTURED_GRAMMAR_PROFILE;
+}
 
 export class OllamaProvider extends ProviderAdapter {
   constructor(options = {}) {
@@ -18,6 +34,7 @@ export class OllamaProvider extends ProviderAdapter {
 
     this.baseUrl = options.baseUrl ?? process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434";
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    this.structuredGrammarProfile = readStructuredGrammarProfile(options);
   }
 
   async isAvailable() {
@@ -37,6 +54,9 @@ export class OllamaProvider extends ProviderAdapter {
       request,
       operation: async ({ signal }) => {
         const prompt = buildPrompt(request);
+        const structuredPrompt = buildStructuredProviderPrompt(request, {
+          structuredGrammarProfile: this.structuredGrammarProfile
+        });
         const startedAt = performance.now();
         let response;
 
@@ -48,7 +68,8 @@ export class OllamaProvider extends ProviderAdapter {
             },
             body: JSON.stringify({
               model: this.model,
-              prompt: `${prompt.system}\n\n${prompt.user}`,
+              prompt: structuredPrompt,
+              format: "json",
               stream: false
             }),
             signal
@@ -85,22 +106,15 @@ export class OllamaProvider extends ProviderAdapter {
           );
         }
 
-        const interpretation = normalizeProviderText(payload?.response);
-
-        if (!interpretation) {
-          throw createProviderInvalidResponseError(
-            this.name,
-            "Ollama response did not contain usable translation text."
-          );
-        }
-
-        return buildTranslationResult({
+        return parseStructuredProviderOutput({
+          content: payload?.response,
           request,
           provider: this.name,
           model: this.model,
           latency: Math.round(performance.now() - startedAt),
-          interpretation,
-          notes: ["Minimal Ollama translation template.", "Normalization strips obvious reasoning wrappers only."]
+          templateId: prompt.templateId,
+          structuredGrammarProfile: this.structuredGrammarProfile,
+          contentPath: "response"
         });
       }
     });

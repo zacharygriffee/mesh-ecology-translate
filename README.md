@@ -50,11 +50,11 @@ Notes:
 
 ## TranslationResult
 
-`TranslationResult` is the normalized provider output.
+`TranslationResult` is the normalized provider output. Providers may differ internally, but REST/OpenAI-compatible APIs, Ollama, and future adapters are expected to return the same portable contract-level shape.
 
 Fields:
 
-- `grammarCandidate`: flexible object returned for downstream consumers
+- `grammarCandidate`: portable candidate object returned for downstream consumers
 - `confidence`: number from `0` to `1`
 - `ambiguities`: array of strings
 - `needsClarification`: boolean
@@ -72,6 +72,10 @@ Current providers:
 - `rest`: OpenAI-compatible REST APIs
 - `codex-cli`: stub adapter only
 
+Provider adapters must normalize raw model/provider output before returning. Command/profile providers should prefer structured JSON output; free-text command output is not a successful command result unless explicitly represented as clarification or error.
+
+See [Provider Policy](./docs/provider-policy.md) for adapter requirements and future provider onboarding.
+
 Routing supports:
 
 - `local_preferred`
@@ -85,10 +89,10 @@ The library includes a small amount of operational hardening:
 
 - timeout support for provider calls
 - cancellation via `AbortSignal`
-- conservative output normalization before provider text becomes interpretation output
+- structured provider parsing, normalization, and validation before return
 - classified provider and routing errors for easier consumer handling
 
-Normalization is intentionally narrow. It currently strips obvious reasoning wrappers such as `<think>...</think>` and trims the result. It does not try to deeply parse or reinterpret model output.
+Structured normalization is intentionally narrow. It validates required fields, normalizes documented synonyms, blocks unsafe authority or execution claims, and does not attempt broad JSON repair or hidden execution.
 
 ## Configuration
 
@@ -110,6 +114,8 @@ This package is library-shaped and expects configuration to be supplied by the c
 - REST structured normalization maps flat scope strings to object scope, for example `"yard"` to `{ area: "yard" }`, and normalizes idempotency synonyms such as `idempotent` / `repeatable` to `conditional`.
 - REST structured prompts are compact by default: they include profile, security posture, input text, minimal explicit context, allowed enums, and the target schema instead of dumping full continuity or large control surfaces.
 - REST structured invalid-JSON errors include only a short redacted `message.content` prefix for provider debugging; request headers, API keys, and full prompts are not included.
+- Ollama structured output uses the same shared parser and normalizer as REST where practical, requests JSON from `/api/generate`, preserves validated model confidence, and blocks malformed/free-text command output instead of returning a hardcoded confidence.
+- Future providers should use the shared structured parser/normalizer and add provider policy tests.
 
 ## Non-Goals
 

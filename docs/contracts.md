@@ -56,9 +56,11 @@ Fields:
   - `model`
   - `latency` optional
 
-The grammar candidate remains intentionally opaque in this repository. The seed implementation returns a simple structure that records profile, source text, interpretation, template, and continuity.
+The grammar candidate is portable provider output. Structured command results are normalized before return so REST/OpenAI-compatible providers, Ollama, and future adapters can expose the same contract-level shape.
 
-Provider text is normalized conservatively before it becomes `grammarCandidate.interpretation`. Current normalization strips obvious reasoning wrappers such as `<think>...</think>` and trims surrounding whitespace. It does not attempt deeper semantic parsing of model output.
+Structured grammar candidates include fields such as `version`, `profile`, `sourceText`, `intentClass`, `action`, object-shaped `target`, object-shaped `scope` when present, `idempotency`, `consequenceClass`, `execution`, `success`, and provenance or metadata.
+
+Free-text interpretation is legacy behavior and is not a successful command/profile result unless explicitly represented as clarification or error. See [Provider Policy](./provider-policy.md).
 
 ## ProviderAdapter
 
@@ -69,6 +71,8 @@ translate(request: TranslationRequest): Promise<TranslationResult>
 ```
 
 The seed providers also expose `isAvailable()` so the router can make explicit routing decisions. Availability checks are operational helpers, not part of the core translation contract.
+
+Provider adapters must normalize raw provider output into the portable contract before returning. Consumers should not need provider-specific branches for REST, Ollama, or future adapters.
 
 ## Failure Shape
 

@@ -166,6 +166,11 @@ test("prompt and grammar candidate include explicit context as translation input
 
 test("rest structured grammar has no Edge runtime dependency", () => {
   const restSource = readFileSync(new URL("../src/providers/rest.js", import.meta.url), "utf8");
+  const ollamaSource = readFileSync(new URL("../src/providers/ollama.js", import.meta.url), "utf8");
+  const structuredSource = readFileSync(
+    new URL("../src/providers/structured.js", import.meta.url),
+    "utf8"
+  );
   const packageJson = JSON.parse(
     readFileSync(new URL("../package.json", import.meta.url), "utf8")
   );
@@ -174,12 +179,13 @@ test("rest structured grammar has no Edge runtime dependency", () => {
     ...(packageJson.devDependencies ?? {}),
     ...(packageJson.peerDependencies ?? {})
   };
-  const restImportLines = restSource
+  const providerImportLines = [restSource, ollamaSource, structuredSource]
+    .join("\n")
     .split("\n")
     .filter((line) => line.trim().startsWith("import "));
 
   assert.equal("mesh-ecology-edge" in dependencies, false);
-  assert.equal(restImportLines.some((line) => /\bedge\b/i.test(line)), false);
+  assert.equal(providerImportLines.some((line) => /\bedge\b/i.test(line)), false);
 });
 
 test("rest provider reports unavailable when env config is missing", async () => {
@@ -1307,11 +1313,11 @@ test("rest provider rejects unsafe structured grammar fields", async () => {
   }
 });
 
-test("ollama provider checks availability and returns a valid structure", async () => {
+test("ollama provider checks availability and returns structured command grammar", async () => {
   const calls = [];
   const provider = new OllamaProvider({
     baseUrl: "http://127.0.0.1:11434",
-    model: "llama3.2:3b",
+    model: "qwen3:8b",
     fetchImpl: async (url, options = {}) => {
       calls.push({ url, options });
 
@@ -1320,7 +1326,17 @@ test("ollama provider checks availability and returns a valid structure", async 
       }
 
       return createJsonResponse({
-        response: "<think>private chain</think>\nLocal interpretation"
+        response: createStructuredRestContent({
+          confidence: 0.91,
+          grammarCandidate: {
+            intentClass: "control",
+            action: "turn_off",
+            target: "yard lights",
+            scope: "yard",
+            idempotency: "idempotent",
+            rawInterpretation: "Deactivate all yard lighting devices"
+          }
+        })
       });
     }
   });
@@ -1329,14 +1345,167 @@ test("ollama provider checks availability and returns a valid structure", async 
 
   const result = await provider.translate(
     createRequest({
+      inputs: [{ type: "text", content: "turn off all yard lights" }],
+      profile: "command",
       provider: "ollama"
     })
   );
 
   validateTranslationResult(result);
   assert.equal(result.providerInfo.provider, "ollama");
-  assert.equal(result.grammarCandidate.interpretation, "Local interpretation");
+  assert.equal(result.providerInfo.model, "qwen3:8b");
+  assert.equal(result.confidence, 0.91);
+  assert.notEqual(result.confidence, 0.72);
+  assert.equal(result.grammarCandidate.intentClass, "control");
+  assert.equal(result.grammarCandidate.action, "turn_off");
+  assert.deepEqual(result.grammarCandidate.target, {
+    actorGroup: "yard_lights",
+    selectedActorIds: [],
+    desiredState: "off"
+  });
+  assert.deepEqual(result.grammarCandidate.scope, { area: "yard" });
+  assert.equal(result.grammarCandidate.idempotency, "conditional");
+  assert.deepEqual(result.grammarCandidate.ambiguity, {
+    unresolvedFields: ["target.selectedActorIds"]
+  });
   assert.equal(calls.length, 2);
+
+  const body = JSON.parse(calls[1].options.body);
+  assert.equal(body.model, "qwen3:8b");
+  assert.equal(body.format, "json");
+  assert.equal(body.stream, false);
+  assert.match(body.prompt, /Return only valid JSON/);
+  assert.match(body.prompt, /No markdown/);
+  assert.match(body.prompt, /No reasoning/);
+  assert.match(body.prompt, /target must be an object/);
+});
+
+test("rest and ollama normalize structured fixtures to the same grammar contract shape", async () => {
+  const content = createStructuredRestContent({
+    confidence: 0.93,
+    grammarCandidate: {
+      intentClass: "device_control",
+      action: "turn_on",
+      target: "yard lights",
+      scope: "front yard",
+      idempotency: "repeatable",
+      rawInterpretation: "Activate the yard lighting devices"
+    }
+  });
+  const restProvider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content
+            }
+          }
+        ]
+      })
+  });
+  const ollamaProvider = new OllamaProvider({
+    baseUrl: "http://127.0.0.1:11434",
+    model: "qwen3:8b",
+    fetchImpl: async () =>
+      createJsonResponse({
+        response: content
+      })
+  });
+  const request = createRequest({
+    inputs: [{ type: "text", content: "turn on the front yard lights" }],
+    profile: "command"
+  });
+
+  const restResult = await restProvider.translate({ ...request, provider: "rest" });
+  const ollamaResult = await ollamaProvider.translate({ ...request, provider: "ollama" });
+
+  validateTranslationResult(restResult);
+  validateTranslationResult(ollamaResult);
+  assert.equal(restResult.confidence, 0.93);
+  assert.equal(ollamaResult.confidence, 0.93);
+  assert.deepEqual(ollamaResult.grammarCandidate.target, restResult.grammarCandidate.target);
+  assert.deepEqual(ollamaResult.grammarCandidate.scope, restResult.grammarCandidate.scope);
+  assert.equal(ollamaResult.grammarCandidate.intentClass, restResult.grammarCandidate.intentClass);
+  assert.equal(ollamaResult.grammarCandidate.idempotency, restResult.grammarCandidate.idempotency);
+  assert.equal(ollamaResult.grammarCandidate.consequenceClass, restResult.grammarCandidate.consequenceClass);
+  assert.deepEqual(ollamaResult.grammarCandidate.execution, restResult.grammarCandidate.execution);
+  assert.deepEqual(ollamaResult.grammarCandidate.success, restResult.grammarCandidate.success);
+});
+
+test("ollama malformed JSON blocks with a classified provider error", async () => {
+  const provider = new OllamaProvider({
+    baseUrl: "http://127.0.0.1:11434",
+    model: "qwen3:8b",
+    fetchImpl: async () =>
+      createJsonResponse({
+        response: "not json VENICE_INFERENCE_KEY_TESTSECRET"
+      })
+  });
+
+  await assert.rejects(
+    () => provider.translate(createRequest({ provider: "ollama" })),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /response must be valid JSON/);
+      assert.match(error.message, /contentPrefix="not json \[REDACTED\]/);
+      assert.doesNotMatch(error.message, /VENICE_INFERENCE_KEY_TESTSECRET/);
+      return true;
+    }
+  );
+});
+
+test("ollama free-text response does not produce a successful command candidate", async () => {
+  const provider = new OllamaProvider({
+    baseUrl: "http://127.0.0.1:11434",
+    model: "qwen3:8b",
+    fetchImpl: async () =>
+      createJsonResponse({
+        response: "Local interpretation"
+      })
+  });
+
+  await assert.rejects(
+    () =>
+      provider.translate(
+        createRequest({
+          inputs: [{ type: "text", content: "turn off all yard lights" }],
+          profile: "command",
+          provider: "ollama"
+        })
+      ),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /response must be valid JSON/);
+      return true;
+    }
+  );
+});
+
+test("ollama reasoning-prefixed response blocks instead of falling back", async () => {
+  const provider = new OllamaProvider({
+    baseUrl: "http://127.0.0.1:11434",
+    model: "qwen3:8b",
+    fetchImpl: async () =>
+      createJsonResponse({
+        response: `<think>private reasoning</think>\n${createStructuredRestContent()}`
+      })
+  });
+
+  await assert.rejects(
+    () => provider.translate(createRequest({ provider: "ollama" })),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /response must be valid JSON/);
+      return true;
+    }
+  );
 });
 
 test("rest provider times out with a classified error", async () => {
