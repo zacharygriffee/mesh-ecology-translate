@@ -3,7 +3,10 @@ export { OllamaProvider } from "./ollama.js";
 export {
   DEFAULT_REST_MAX_TOKENS,
   DEFAULT_REST_RESPONSE_FORMAT,
+  DEFAULT_REST_STRUCTURED_GRAMMAR_PROFILE,
   DEFAULT_REST_TEMPERATURE,
+  PORTABLE_INTENT_CLASSES,
+  REST_STRUCTURED_GRAMMAR_PROFILES,
   RestProvider
 } from "./rest.js";
 export { CodexCliProvider } from "./codex-cli.js";

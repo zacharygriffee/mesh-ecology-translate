@@ -1,5 +1,6 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
 
 import { validateTranslationResult } from "../src/contracts/index.js";
 import {
@@ -62,7 +63,7 @@ function createStructuredRestContent(overrides = {}) {
 
   return JSON.stringify({
     grammarCandidate: {
-      intent: "clarify",
+      intentClass: "inform_operator",
       target: "habitat report",
       scope: null,
       action: "summarize",
@@ -163,6 +164,24 @@ test("prompt and grammar candidate include explicit context as translation input
   assert.deepEqual(result.grammarCandidate.context, request.context);
 });
 
+test("rest structured grammar has no Edge runtime dependency", () => {
+  const restSource = readFileSync(new URL("../src/providers/rest.js", import.meta.url), "utf8");
+  const packageJson = JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf8")
+  );
+  const dependencies = {
+    ...(packageJson.dependencies ?? {}),
+    ...(packageJson.devDependencies ?? {}),
+    ...(packageJson.peerDependencies ?? {})
+  };
+  const restImportLines = restSource
+    .split("\n")
+    .filter((line) => line.trim().startsWith("import "));
+
+  assert.equal("mesh-ecology-edge" in dependencies, false);
+  assert.equal(restImportLines.some((line) => /\bedge\b/i.test(line)), false);
+});
+
 test("rest provider reports unavailable when env config is missing", async () => {
   const provider = new RestProvider({
     baseUrl: "",
@@ -191,7 +210,7 @@ test("rest provider returns a valid structure with a mocked OpenAI-compatible re
               content: createStructuredRestContent({
                 confidence: 0.88,
                 grammarCandidate: {
-                  intent: "summarize",
+                  intentClass: "generate",
                   rawInterpretation: "Summarize the habitat report."
                 }
               })
@@ -209,9 +228,51 @@ test("rest provider returns a valid structure with a mocked OpenAI-compatible re
 
   validateTranslationResult(result);
   assert.equal(result.providerInfo.provider, "rest");
-  assert.equal(result.grammarCandidate.intent, "summarize");
+  assert.equal(result.grammarCandidate.intentClass, "generate");
   assert.equal(result.grammarCandidate.rawInterpretation, "Summarize the habitat report.");
   assert.equal(result.confidence, 0.88);
+});
+
+test("rest provider emits portable control intentClass for yard lights command", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                confidence: 0.85,
+                grammarCandidate: {
+                  intentClass: "control",
+                  action: "turn_off",
+                  target: "yard lights",
+                  scope: "all",
+                  rawInterpretation: "Deactivate all yard lighting devices"
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  const result = await provider.translate(
+    createRequest({
+      inputs: [{ type: "text", content: "turn off all yard lights" }],
+      profile: "command",
+      provider: "rest"
+    })
+  );
+
+  validateTranslationResult(result);
+  assert.equal(result.grammarCandidate.intentClass, "control");
+  assert.equal(result.grammarCandidate.action, "turn_off");
+  assert.equal(result.grammarCandidate.target, "yard_lights");
+  assert.equal(result.grammarCandidate.scope, "all");
+  assert.equal(result.confidence, 0.85);
 });
 
 test("rest provider request body includes configured max_tokens and JSON response_format", async () => {
@@ -229,6 +290,10 @@ test("rest provider request body includes configured max_tokens and JSON respons
   assert.match(calls[0].body.messages[0].content, /Return only JSON/);
   assert.match(calls[0].body.messages[0].content, /No markdown/);
   assert.match(calls[0].body.messages[0].content, /No reasoning text/);
+  assert.match(calls[0].body.messages[0].content, /intentClass/);
+  assert.match(calls[0].body.messages[0].content, /control/);
+  assert.match(calls[0].body.messages[0].content, /observe/);
+  assert.match(calls[0].body.messages[0].content, /snake_case/);
   assert.match(calls[0].body.messages[1].content, /rawInterpretation/);
 });
 
@@ -362,7 +427,7 @@ test("rest provider uses message content when reasoning_content is also present"
             message: {
               content: createStructuredRestContent({
                 grammarCandidate: {
-                  intent: "final",
+                  intentClass: "inform_operator",
                   rawInterpretation: "Final interpretation"
                 }
               }),
@@ -380,8 +445,91 @@ test("rest provider uses message content when reasoning_content is also present"
   );
 
   validateTranslationResult(result);
-  assert.equal(result.grammarCandidate.intent, "final");
+  assert.equal(result.grammarCandidate.intentClass, "inform_operator");
   assert.equal(result.grammarCandidate.rawInterpretation, "Final interpretation");
+});
+
+test("rest provider normalizes device_control intent synonym to control", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                grammarCandidate: {
+                  intentClass: undefined,
+                  intent: "device_control",
+                  action: "turn_off",
+                  target: "yard lights"
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  const result = await provider.translate(createRequest({ provider: "rest" }));
+
+  validateTranslationResult(result);
+  assert.equal(result.grammarCandidate.intentClass, "control");
+  assert.equal(result.grammarCandidate.target, "yard_lights");
+  assert.equal(result.grammarCandidate.metadata.normalizedIntentClassFrom, "intent");
+  assert.equal(result.grammarCandidate.metadata.rawIntentClass, "device_control");
+});
+
+test("rest provider normalizes status and read-only synonyms to observe", async () => {
+  const statusProvider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                grammarCandidate: {
+                  intentClass: undefined,
+                  intent: "status",
+                  action: "read_status"
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+  const readOnlyProvider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                grammarCandidate: {
+                  intentClass: "read-only",
+                  action: "read_status"
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  const statusResult = await statusProvider.translate(createRequest({ provider: "rest" }));
+  const readOnlyResult = await readOnlyProvider.translate(createRequest({ provider: "rest" }));
+
+  assert.equal(statusResult.grammarCandidate.intentClass, "observe");
+  assert.equal(readOnlyResult.grammarCandidate.intentClass, "observe");
 });
 
 test("rest provider ignores reasoning_content by default when content is empty", async () => {
@@ -577,7 +725,7 @@ test("rest provider rejects structured JSON missing required fields", async () =
             message: {
               content: JSON.stringify({
                 grammarCandidate: {
-                  intent: "clarify"
+                  intentClass: "inform_operator"
                 },
                 confidence: 0.8,
                 needsClarification: false,
@@ -596,6 +744,70 @@ test("rest provider rejects structured JSON missing required fields", async () =
       assert(error instanceof ProviderError);
       assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
       assert.match(error.message, /grammarCandidate\.target/);
+      return true;
+    }
+  );
+});
+
+test("rest provider rejects structured JSON missing intentClass", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                grammarCandidate: {
+                  intentClass: undefined
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  await assert.rejects(
+    () => provider.translate(createRequest({ provider: "rest" })),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /grammarCandidate\.intentClass is required/);
+      return true;
+    }
+  );
+});
+
+test("rest provider rejects unknown intentClass", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                grammarCandidate: {
+                  intentClass: "device_magic"
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  await assert.rejects(
+    () => provider.translate(createRequest({ provider: "rest" })),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /intentClass must be one of/);
       return true;
     }
   );

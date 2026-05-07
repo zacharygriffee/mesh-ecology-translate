@@ -104,6 +104,8 @@ This package is library-shaped and expects configuration to be supplied by the c
 - REST output uses `message.content` as the translation text. `message.reasoning_content` is ignored by default and can only be used with explicit `allowReasoningContentFallback: true`.
 - REST structured JSON output is enabled by default. It sends `response_format: { type: "json_object" }`, instructs the model to return only JSON, and validates `grammarCandidate`, `confidence`, `needsClarification`, `ambiguities`, and `notes`.
 - REST structured output can be disabled only with explicit `structuredOutput: false` or `REST_STRUCTURED_OUTPUT=false`. `responseFormat` or `REST_RESPONSE_FORMAT` may provide `json_object` or `json_schema` response formats.
+- REST structured grammar defaults to the provider-neutral `portable_v1` profile. `structuredGrammarProfile` or `REST_STRUCTURED_GRAMMAR_PROFILE` can select `portable_v1` or `edge_v1`; both use the safe `intentClass` enum: `control`, `observe`, `generate`, `transform`, `deliver`, `share_candidate`, `inform_operator`, and `protected_operation`.
+- REST structured normalization maps explicit synonyms such as `device_control` to `control`, `status` / `read-only` to `observe`, and simple targets like `yard lights` to stable IDs like `yard_lights`.
 
 ## Non-Goals
 
