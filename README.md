@@ -102,6 +102,8 @@ This package is library-shaped and expects configuration to be supplied by the c
 - REST `temperature` defaults to `0.2` and can be overridden with `REST_TEMPERATURE` or `RestProvider` option `temperature`.
 - REST provider-specific body fields are sent only through explicit `extraBodyFields` configuration. Tool/function/stream fields are filtered out.
 - REST output uses `message.content` as the translation text. `message.reasoning_content` is ignored by default and can only be used with explicit `allowReasoningContentFallback: true`.
+- REST structured JSON output is enabled by default. It sends `response_format: { type: "json_object" }`, instructs the model to return only JSON, and validates `grammarCandidate`, `confidence`, `needsClarification`, `ambiguities`, and `notes`.
+- REST structured output can be disabled only with explicit `structuredOutput: false` or `REST_STRUCTURED_OUTPUT=false`. `responseFormat` or `REST_RESPONSE_FORMAT` may provide `json_object` or `json_schema` response formats.
 
 ## Non-Goals
 

@@ -57,14 +57,31 @@ function createAbortablePendingFetch() {
     });
 }
 
+function createStructuredRestContent(overrides = {}) {
+  const { grammarCandidate = {}, ...resultOverrides } = overrides;
+
+  return JSON.stringify({
+    grammarCandidate: {
+      intent: "clarify",
+      target: "habitat report",
+      scope: null,
+      action: "summarize",
+      parameters: {},
+      rawInterpretation: "Clarify the habitat report.",
+      ...grammarCandidate
+    },
+    confidence: 0.84,
+    needsClarification: false,
+    ambiguities: [],
+    notes: [],
+    ...resultOverrides
+  });
+}
+
 function createCapturingRestProvider(options = {}) {
   const calls = [];
-  const provider = new RestProvider({
-    baseUrl: "https://example.test/v1",
-    apiKey: "secret",
-    model: "remote-model",
-    ...options,
-    fetchImpl: async (url, fetchOptions = {}) => {
+  const {
+    fetchImpl = async (url, fetchOptions = {}) => {
       calls.push({
         url,
         options: fetchOptions,
@@ -75,12 +92,20 @@ function createCapturingRestProvider(options = {}) {
         choices: [
           {
             message: {
-              content: "Remote interpretation"
+              content: createStructuredRestContent()
             }
           }
         ]
       });
-    }
+    },
+    ...providerOptions
+  } = options;
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    ...providerOptions,
+    fetchImpl
   });
 
   return { calls, provider };
@@ -163,7 +188,13 @@ test("rest provider returns a valid structure with a mocked OpenAI-compatible re
         choices: [
           {
             message: {
-              content: "Remote interpretation"
+              content: createStructuredRestContent({
+                confidence: 0.88,
+                grammarCandidate: {
+                  intent: "summarize",
+                  rawInterpretation: "Summarize the habitat report."
+                }
+              })
             }
           }
         ]
@@ -178,9 +209,12 @@ test("rest provider returns a valid structure with a mocked OpenAI-compatible re
 
   validateTranslationResult(result);
   assert.equal(result.providerInfo.provider, "rest");
+  assert.equal(result.grammarCandidate.intent, "summarize");
+  assert.equal(result.grammarCandidate.rawInterpretation, "Summarize the habitat report.");
+  assert.equal(result.confidence, 0.88);
 });
 
-test("rest provider request body includes configured max_tokens", async () => {
+test("rest provider request body includes configured max_tokens and JSON response_format", async () => {
   const { calls, provider } = createCapturingRestProvider({
     maxTokens: 128
   });
@@ -191,6 +225,11 @@ test("rest provider request body includes configured max_tokens", async () => {
   assert.equal(calls[0].body.max_tokens, 128);
   assert.equal(calls[0].body.model, "remote-model");
   assert.equal(calls[0].body.messages.length, 2);
+  assert.deepEqual(calls[0].body.response_format, { type: "json_object" });
+  assert.match(calls[0].body.messages[0].content, /Return only JSON/);
+  assert.match(calls[0].body.messages[0].content, /No markdown/);
+  assert.match(calls[0].body.messages[0].content, /No reasoning text/);
+  assert.match(calls[0].body.messages[1].content, /rawInterpretation/);
 });
 
 test("rest provider uses default max_tokens when unset", async () =>
@@ -224,6 +263,48 @@ test("rest provider reads max_tokens and temperature overrides from env", async 
     }
   ));
 
+test("rest provider reads response_format override from env", async () =>
+  withTemporaryEnv(
+    {
+      REST_RESPONSE_FORMAT: JSON.stringify({
+        type: "json_schema",
+        json_schema: {
+          name: "translation_result",
+          schema: {
+            type: "object"
+          }
+        }
+      })
+    },
+    async () => {
+      const { calls, provider } = createCapturingRestProvider();
+
+      await provider.translate(createRequest({ provider: "rest" }));
+
+      assert.equal(calls[0].body.response_format.type, "json_schema");
+      assert.equal(calls[0].body.response_format.json_schema.name, "translation_result");
+    }
+  ));
+
+test("rest provider accepts response_format override from constructor options", async () => {
+  const { calls, provider } = createCapturingRestProvider({
+    responseFormat: {
+      type: "json_schema",
+      json_schema: {
+        name: "translation_result",
+        schema: {
+          type: "object"
+        }
+      }
+    }
+  });
+
+  await provider.translate(createRequest({ provider: "rest" }));
+
+  assert.equal(calls[0].body.response_format.type, "json_schema");
+  assert.equal(calls[0].body.response_format.json_schema.name, "translation_result");
+});
+
 test("rest provider supports max_tokens config alias over env", async () =>
   withTemporaryEnv(
     {
@@ -255,6 +336,7 @@ test("rest provider only sends extra body fields when explicitly supplied", asyn
       top_p: 0.8,
       tools: [{ type: "function" }],
       function_call: "auto",
+      response_format: { type: "text" },
       stream: true
     }
   });
@@ -265,6 +347,7 @@ test("rest provider only sends extra body fields when explicitly supplied", asyn
   assert.equal("tools" in explicitProvider.calls[0].body, false);
   assert.equal("function_call" in explicitProvider.calls[0].body, false);
   assert.equal("stream" in explicitProvider.calls[0].body, false);
+  assert.deepEqual(explicitProvider.calls[0].body.response_format, { type: "json_object" });
 });
 
 test("rest provider uses message content when reasoning_content is also present", async () => {
@@ -277,7 +360,12 @@ test("rest provider uses message content when reasoning_content is also present"
         choices: [
           {
             message: {
-              content: "Final interpretation",
+              content: createStructuredRestContent({
+                grammarCandidate: {
+                  intent: "final",
+                  rawInterpretation: "Final interpretation"
+                }
+              }),
               reasoning_content: "<think>private chain</think>\nReasoning interpretation"
             }
           }
@@ -292,7 +380,8 @@ test("rest provider uses message content when reasoning_content is also present"
   );
 
   validateTranslationResult(result);
-  assert.equal(result.grammarCandidate.interpretation, "Final interpretation");
+  assert.equal(result.grammarCandidate.intent, "final");
+  assert.equal(result.grammarCandidate.rawInterpretation, "Final interpretation");
 });
 
 test("rest provider ignores reasoning_content by default when content is empty", async () => {
@@ -323,17 +412,48 @@ test("rest provider ignores reasoning_content by default when content is empty",
     (error) => {
       assert(error instanceof ProviderError);
       assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
-      assert.match(error.message, /message\.content translation text/);
+      assert.match(error.message, /message\.content must contain JSON output/);
       return true;
     }
   );
 });
 
-test("rest provider can opt in to reasoning_content fallback", async () => {
+test("rest provider legacy unstructured mode is explicit", async () => {
+  const { calls, provider } = createCapturingRestProvider({
+    structuredOutput: false,
+    fetchImpl: async (url, fetchOptions = {}) => {
+      calls.push({
+        url,
+        options: fetchOptions,
+        body: JSON.parse(fetchOptions.body)
+      });
+
+      return createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: "Legacy interpretation"
+            }
+          }
+        ]
+      });
+    }
+  });
+
+  const result = await provider.translate(createRequest({ provider: "rest" }));
+
+  validateTranslationResult(result);
+  assert.equal(result.grammarCandidate.interpretation, "Legacy interpretation");
+  assert.equal("response_format" in calls[0].body, false);
+  assert.doesNotMatch(calls[0].body.messages[0].content, /Return only JSON/);
+});
+
+test("rest provider can opt in to reasoning_content fallback in legacy unstructured mode", async () => {
   const provider = new RestProvider({
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredOutput: false,
     allowReasoningContentFallback: true,
     fetchImpl: async () =>
       createJsonResponse({
@@ -359,6 +479,11 @@ test("rest provider can opt in to reasoning_content fallback", async () => {
 });
 
 test("rest provider flattens array content responses", async () => {
+  const content = createStructuredRestContent({
+    grammarCandidate: {
+      rawInterpretation: "First line.\nSecond line."
+    }
+  });
   const provider = new RestProvider({
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
@@ -369,8 +494,7 @@ test("rest provider flattens array content responses", async () => {
           {
             message: {
               content: [
-                { type: "text", text: "First line." },
-                { type: "text", text: "Second line." }
+                { type: "text", text: content }
               ]
             }
           }
@@ -385,7 +509,126 @@ test("rest provider flattens array content responses", async () => {
   );
 
   validateTranslationResult(result);
-  assert.equal(result.grammarCandidate.interpretation, "First line.\nSecond line.");
+  assert.equal(result.grammarCandidate.rawInterpretation, "First line.\nSecond line.");
+});
+
+test("rest provider preserves model-returned confidence above edge intake threshold", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                confidence: 0.91
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  const result = await provider.translate(createRequest({ provider: "rest" }));
+
+  validateTranslationResult(result);
+  assert.equal(result.confidence, 0.91);
+});
+
+test("rest provider rejects invalid JSON content with a classified error", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: "not json"
+            }
+          }
+        ]
+      })
+  });
+
+  await assert.rejects(
+    () => provider.translate(createRequest({ provider: "rest" })),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /valid JSON/);
+      return true;
+    }
+  );
+});
+
+test("rest provider rejects structured JSON missing required fields", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                grammarCandidate: {
+                  intent: "clarify"
+                },
+                confidence: 0.8,
+                needsClarification: false,
+                ambiguities: [],
+                notes: []
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  await assert.rejects(
+    () => provider.translate(createRequest({ provider: "rest" })),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /grammarCandidate\.target/);
+      return true;
+    }
+  );
+});
+
+test("rest provider rejects invalid structured confidence", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                confidence: 1.2
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  await assert.rejects(
+    () => provider.translate(createRequest({ provider: "rest" })),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /confidence/);
+      return true;
+    }
+  );
 });
 
 test("ollama provider checks availability and returns a valid structure", async () => {
@@ -472,7 +715,7 @@ test("rest provider rejects empty content without reasoning_content with a class
     (error) => {
       assert(error instanceof ProviderError);
       assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
-      assert.match(error.message, /message\.content translation text/);
+      assert.match(error.message, /message\.content must contain JSON output/);
       return true;
     }
   );
