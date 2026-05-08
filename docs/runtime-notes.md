@@ -8,6 +8,8 @@ Notes:
 - The library does not auto-load `.env` files by default.
 - Consumers may pass provider options directly when constructing adapters or routers.
 - Provider calls use a default timeout of `30000ms` unless `TranslationRequest.timeoutMs` overrides it.
+- Ollama may need a larger `TranslationRequest.timeoutMs` during cold model starts.
+- Consumers can enable Ollama warmup with `OllamaProvider({ warmup: true, warmupTimeoutMs })` or `OLLAMA_WARMUP=true` and `OLLAMA_WARMUP_TIMEOUT_MS`; the warmup timeout defaults to `120000ms`.
 - Consumers may cancel in-flight requests with `TranslationRequest.signal`.
 - Structured provider output is normalized through the portable provider contract before return.
 - Command/profile providers should not return free-text success results.

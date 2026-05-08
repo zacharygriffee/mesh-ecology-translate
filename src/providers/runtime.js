@@ -59,8 +59,15 @@ export function createRequestExecutionContext(request, defaultTimeoutMs = DEFAUL
   };
 }
 
-export async function executeWithRequestControl({ provider, request, operation }) {
-  const context = createRequestExecutionContext(request);
+export async function executeWithRequestControl({
+  provider,
+  request,
+  operation,
+  defaultTimeoutMs = DEFAULT_PROVIDER_TIMEOUT_MS,
+  timeoutMessage,
+  timeoutDetails
+}) {
+  const context = createRequestExecutionContext(request, defaultTimeoutMs);
 
   try {
     if (context.signal.aborted) {
@@ -72,7 +79,16 @@ export async function executeWithRequestControl({ provider, request, operation }
     const abortReason = context.getAbortReason();
 
     if (abortReason === "timeout") {
-      throw createProviderTimeoutError(provider, context.timeoutMs, error);
+      throw createProviderTimeoutError(provider, context.timeoutMs, error, {
+        message:
+          typeof timeoutMessage === "function"
+            ? timeoutMessage(context.timeoutMs)
+            : timeoutMessage,
+        details:
+          typeof timeoutDetails === "function"
+            ? timeoutDetails(context.timeoutMs)
+            : timeoutDetails
+      });
     }
 
     if (abortReason === "cancelled") {

@@ -1655,6 +1655,7 @@ test("ollama provider checks availability and returns structured command grammar
   const provider = new OllamaProvider({
     baseUrl: "http://127.0.0.1:11434",
     model: "qwen3:8b",
+    warmup: false,
     fetchImpl: async (url, options = {}) => {
       calls.push({ url, options });
 
@@ -1717,6 +1718,57 @@ test("ollama provider checks availability and returns structured command grammar
   assert.match(body.prompt, /target must be an object/);
 });
 
+test("ollama provider can warm up the model before translation", async () => {
+  const calls = [];
+  const provider = new OllamaProvider({
+    baseUrl: "http://127.0.0.1:11434",
+    model: "qwen3:8b",
+    warmup: true,
+    warmupTimeoutMs: 90000,
+    keepAlive: "10m",
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url, options });
+
+      if (calls.length === 1) {
+        return createJsonResponse({
+          model: "qwen3:8b",
+          response: "",
+          done: true,
+          done_reason: "load"
+        });
+      }
+
+      return createJsonResponse({
+        response: createStructuredRestContent()
+      });
+    }
+  });
+
+  const result = await provider.translate(
+    createRequest({
+      provider: "ollama",
+      timeoutMs: 20
+    })
+  );
+
+  validateTranslationResult(result);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, "http://127.0.0.1:11434/api/generate");
+  assert.equal(calls[1].url, "http://127.0.0.1:11434/api/generate");
+
+  const warmupBody = JSON.parse(calls[0].options.body);
+  assert.equal(warmupBody.model, "qwen3:8b");
+  assert.equal(warmupBody.prompt, "");
+  assert.equal(warmupBody.stream, false);
+  assert.equal(warmupBody.keep_alive, "10m");
+
+  const translateBody = JSON.parse(calls[1].options.body);
+  assert.equal(translateBody.model, "qwen3:8b");
+  assert.equal(translateBody.format, "json");
+  assert.equal(translateBody.stream, false);
+  assert.equal(translateBody.keep_alive, "10m");
+});
+
 test("rest and ollama normalize structured fixtures to the same grammar contract shape", async () => {
   const content = createStructuredRestContent({
     confidence: 0.93,
@@ -1747,6 +1799,7 @@ test("rest and ollama normalize structured fixtures to the same grammar contract
   const ollamaProvider = new OllamaProvider({
     baseUrl: "http://127.0.0.1:11434",
     model: "qwen3:8b",
+    warmup: false,
     fetchImpl: async () =>
       createJsonResponse({
         response: content
@@ -1777,6 +1830,7 @@ test("ollama malformed JSON blocks with a classified provider error", async () =
   const provider = new OllamaProvider({
     baseUrl: "http://127.0.0.1:11434",
     model: "qwen3:8b",
+    warmup: false,
     fetchImpl: async () =>
       createJsonResponse({
         response: "not json VENICE_INFERENCE_KEY_TESTSECRET"
@@ -1800,6 +1854,7 @@ test("ollama free-text response does not produce a successful command candidate"
   const provider = new OllamaProvider({
     baseUrl: "http://127.0.0.1:11434",
     model: "qwen3:8b",
+    warmup: false,
     fetchImpl: async () =>
       createJsonResponse({
         response: "Local interpretation"
@@ -1828,6 +1883,7 @@ test("ollama reasoning-prefixed response blocks instead of falling back", async 
   const provider = new OllamaProvider({
     baseUrl: "http://127.0.0.1:11434",
     model: "qwen3:8b",
+    warmup: false,
     fetchImpl: async () =>
       createJsonResponse({
         response: `<think>private reasoning</think>\n${createStructuredRestContent()}`
@@ -1865,6 +1921,63 @@ test("rest provider times out with a classified error", async () => {
       assert(error instanceof ProviderError);
       assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_TIMEOUT);
       assert.equal(error.details.timeoutMs, 20);
+      return true;
+    }
+  );
+});
+
+test("ollama provider timeout explains cold model warmup", async () => {
+  const provider = new OllamaProvider({
+    baseUrl: "http://127.0.0.1:11434",
+    model: "llama3.2:3b",
+    warmup: false,
+    fetchImpl: createAbortablePendingFetch()
+  });
+
+  await assert.rejects(
+    () =>
+      provider.translate(
+        createRequest({
+          provider: "ollama",
+          timeoutMs: 20
+        })
+      ),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_TIMEOUT);
+      assert.equal(error.details.timeoutMs, 20);
+      assert.match(error.message, /Ollama can exceed the normal timeout/);
+      assert.match(error.message, /TranslationRequest\.timeoutMs/);
+      assert.match(error.message, /warmupTimeoutMs/);
+      return true;
+    }
+  );
+});
+
+test("ollama provider warmup uses its own timeout budget", async () => {
+  const provider = new OllamaProvider({
+    baseUrl: "http://127.0.0.1:11434",
+    model: "llama3.2:3b",
+    warmup: true,
+    warmupTimeoutMs: 20,
+    fetchImpl: createAbortablePendingFetch()
+  });
+
+  await assert.rejects(
+    () =>
+      provider.translate(
+        createRequest({
+          provider: "ollama",
+          timeoutMs: 100
+        })
+      ),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_TIMEOUT);
+      assert.equal(error.details.timeoutMs, 20);
+      assert.equal(error.details.phase, "warmup");
+      assert.match(error.message, /warmup timed out/);
+      assert.match(error.message, /OLLAMA_WARMUP_TIMEOUT_MS/);
       return true;
     }
   );
@@ -1908,6 +2021,7 @@ test("ollama provider respects cancellation signals", async () => {
   const provider = new OllamaProvider({
     baseUrl: "http://127.0.0.1:11434",
     model: "llama3.2:3b",
+    warmup: false,
     fetchImpl: createAbortablePendingFetch()
   });
 

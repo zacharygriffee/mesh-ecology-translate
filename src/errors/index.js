@@ -45,15 +45,19 @@ export function createProviderUnavailableError(provider, message, options = {}) 
   });
 }
 
-export function createProviderTimeoutError(provider, timeoutMs, cause) {
-  return new ProviderError(`Provider "${provider}" timed out after ${timeoutMs}ms.`, {
-    code: PROVIDER_ERROR_CODES.PROVIDER_TIMEOUT,
-    provider,
-    details: {
-      timeoutMs
-    },
-    cause
-  });
+export function createProviderTimeoutError(provider, timeoutMs, cause, options = {}) {
+  return new ProviderError(
+    options.message ?? `Provider "${provider}" timed out after ${timeoutMs}ms.`,
+    {
+      code: PROVIDER_ERROR_CODES.PROVIDER_TIMEOUT,
+      provider,
+      details: {
+        timeoutMs,
+        ...(options.details ?? {})
+      },
+      cause
+    }
+  );
 }
 
 export function createProviderInvalidResponseError(provider, message, options = {}) {

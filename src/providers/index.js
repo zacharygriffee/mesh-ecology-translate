@@ -1,5 +1,5 @@
 export { ProviderAdapter, PROFILE_TEMPLATES, buildPrompt, buildTranslationResult } from "./base.js";
-export { OllamaProvider } from "./ollama.js";
+export { DEFAULT_OLLAMA_WARMUP_TIMEOUT_MS, OllamaProvider } from "./ollama.js";
 export {
   DEFAULT_REST_MAX_TOKENS,
   DEFAULT_REST_RESPONSE_FORMAT,
