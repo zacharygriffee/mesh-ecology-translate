@@ -216,18 +216,33 @@ async function withTemporaryEnv(values, callback) {
 }
 
 test("codex-cli provider returns a valid structured command result", async () => {
+  const outputContent = createGenericRestContent({
+    confidence: 0.92,
+    grammarCandidate: {
+      actionFamily: "consumer_defined",
+      targetClass: "device",
+      targetRefs: [{ label: "yard lights" }],
+      idempotency: "conditional",
+      reversibility: "unknown",
+      rawInterpretation: "Deactivate all yard lighting devices"
+    }
+  });
+  let capturedOutputSchema = null;
   const { calls, runner } = createMockCodexRunner({
-    outputContent: createGenericRestContent({
-      confidence: 0.92,
-      grammarCandidate: {
-        actionFamily: "consumer_defined",
-        targetClass: "device",
-        targetRefs: [{ label: "yard lights" }],
-        idempotency: "conditional",
-        reversibility: "unknown",
-        rawInterpretation: "Deactivate all yard lighting devices"
-      }
-    })
+    outputContent,
+    onExec: async (invocation) => {
+      const outputSchemaIndex = invocation.args.indexOf("--output-schema");
+      const outputIndex = invocation.args.indexOf("--output-last-message");
+
+      capturedOutputSchema = JSON.parse(readFileSync(invocation.args[outputSchemaIndex + 1], "utf8"));
+      await writeFile(invocation.args[outputIndex + 1], outputContent, "utf8");
+
+      return {
+        status: 0,
+        stdout: "",
+        stderr: ""
+      };
+    }
   });
   const provider = new CodexCliProvider({
     model: "gpt-5.4-codex",
@@ -276,6 +291,15 @@ test("codex-cli provider returns a valid structured command result", async () =>
   assert.equal(execCall.args.includes("workspace-write"), false);
   assert.equal(execCall.args.includes("danger-full-access"), false);
   assert.equal(execCall.args.includes("--dangerously-bypass-approvals-and-sandbox"), false);
+  assert.equal(capturedOutputSchema.properties.grammarCandidate.properties.schemaVersion.type, "string");
+  assert.equal(capturedOutputSchema.properties.grammarCandidate.properties.actionFamily.type, "string");
+  assert.equal(capturedOutputSchema.properties.grammarCandidate.properties.targetClass.type, "string");
+  assert.equal(capturedOutputSchema.properties.grammarCandidate.properties.idempotency.type, "string");
+  assert.equal(capturedOutputSchema.properties.grammarCandidate.properties.reversibility.type, "string");
+  assert.equal(
+    capturedOutputSchema.properties.grammarCandidate.properties.nonAuthority.properties.doesNotExecute.type,
+    "boolean"
+  );
   assert.match(execCall.input, /Return only valid JSON/);
   assert.match(execCall.input, /No reasoning/);
   assert.match(execCall.input, /generic_candidate_v1/);

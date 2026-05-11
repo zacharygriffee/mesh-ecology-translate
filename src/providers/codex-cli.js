@@ -50,9 +50,9 @@ const CODEX_CLI_OUTPUT_SCHEMA = Object.freeze({
         "nonAuthority"
       ],
       properties: {
-        schemaVersion: { const: GENERIC_CANDIDATE_SCHEMA_VERSION },
-        actionFamily: { enum: GENERIC_ACTION_FAMILIES },
-        targetClass: { enum: GENERIC_TARGET_CLASSES },
+        schemaVersion: { type: "string", const: GENERIC_CANDIDATE_SCHEMA_VERSION },
+        actionFamily: { type: "string", enum: GENERIC_ACTION_FAMILIES },
+        targetClass: { type: "string", enum: GENERIC_TARGET_CLASSES },
         targetRefs: {
           type: "array",
           items: {
@@ -75,8 +75,8 @@ const CODEX_CLI_OUTPUT_SCHEMA = Object.freeze({
           type: "array",
           items: { type: "string" }
         },
-        idempotency: { enum: GENERIC_IDEMPOTENCY_VALUES },
-        reversibility: { enum: GENERIC_REVERSIBILITY_VALUES },
+        idempotency: { type: "string", enum: GENERIC_IDEMPOTENCY_VALUES },
+        reversibility: { type: "string", enum: GENERIC_REVERSIBILITY_VALUES },
         requiredOperatorDecision: { type: "string" },
         suggestedConsumerSurface: { type: "string" },
         nonAuthority: {
@@ -84,7 +84,7 @@ const CODEX_CLI_OUTPUT_SCHEMA = Object.freeze({
           additionalProperties: false,
           required: REQUIRED_NON_AUTHORITY_FLAGS,
           properties: Object.fromEntries(
-            REQUIRED_NON_AUTHORITY_FLAGS.map((flag) => [flag, { const: true }])
+            REQUIRED_NON_AUTHORITY_FLAGS.map((flag) => [flag, { type: "boolean", const: true }])
           )
         },
         parameters: {
