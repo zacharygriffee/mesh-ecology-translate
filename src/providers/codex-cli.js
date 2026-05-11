@@ -47,6 +47,10 @@ const CODEX_CLI_OUTPUT_SCHEMA = Object.freeze({
         "unresolvedFields",
         "idempotency",
         "reversibility",
+        "requiredOperatorDecision",
+        "suggestedConsumerSurface",
+        "parameters",
+        "rawInterpretation",
         "nonAuthority"
       ],
       properties: {
@@ -72,8 +76,8 @@ const CODEX_CLI_OUTPUT_SCHEMA = Object.freeze({
         },
         idempotency: { type: "string", enum: GENERIC_IDEMPOTENCY_VALUES },
         reversibility: { type: "string", enum: GENERIC_REVERSIBILITY_VALUES },
-        requiredOperatorDecision: { type: "string" },
-        suggestedConsumerSurface: { type: "string" },
+        requiredOperatorDecision: { type: ["string", "null"] },
+        suggestedConsumerSurface: { type: ["string", "null"] },
         nonAuthority: {
           type: "object",
           additionalProperties: false,
@@ -87,7 +91,7 @@ const CODEX_CLI_OUTPUT_SCHEMA = Object.freeze({
           additionalProperties: false,
           properties: {}
         },
-        rawInterpretation: { type: "string" }
+        rawInterpretation: { type: ["string", "null"] }
       }
     },
     confidence: { type: "number" },

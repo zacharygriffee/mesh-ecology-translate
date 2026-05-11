@@ -297,6 +297,14 @@ test("codex-cli provider returns a valid structured command result", async () =>
   assert.equal(capturedOutputSchema.properties.grammarCandidate.properties.targetRefs.items.type, "string");
   assert.equal(capturedOutputSchema.properties.grammarCandidate.properties.idempotency.type, "string");
   assert.equal(capturedOutputSchema.properties.grammarCandidate.properties.reversibility.type, "string");
+  assert(capturedOutputSchema.properties.grammarCandidate.required.includes("requiredOperatorDecision"));
+  assert(capturedOutputSchema.properties.grammarCandidate.required.includes("suggestedConsumerSurface"));
+  assert(capturedOutputSchema.properties.grammarCandidate.required.includes("parameters"));
+  assert(capturedOutputSchema.properties.grammarCandidate.required.includes("rawInterpretation"));
+  assert.deepEqual(
+    capturedOutputSchema.properties.grammarCandidate.properties.requiredOperatorDecision.type,
+    ["string", "null"]
+  );
   assert.equal(
     capturedOutputSchema.properties.grammarCandidate.properties.nonAuthority.properties.doesNotExecute.type,
     "boolean"
