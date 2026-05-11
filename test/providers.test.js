@@ -301,6 +301,7 @@ test("codex-cli provider returns a valid structured command result", async () =>
     capturedOutputSchema.properties.grammarCandidate.properties.nonAuthority.properties.doesNotExecute.type,
     "boolean"
   );
+  assert.equal(capturedOutputSchema.properties.grammarCandidate.properties.parameters.additionalProperties, false);
   assert.match(execCall.input, /Return only valid JSON/);
   assert.match(execCall.input, /No reasoning/);
   assert.match(execCall.input, /generic_candidate_v1/);

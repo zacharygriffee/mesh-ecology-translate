@@ -84,7 +84,7 @@ const CODEX_CLI_OUTPUT_SCHEMA = Object.freeze({
         },
         parameters: {
           type: "object",
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {}
         },
         rawInterpretation: { type: "string" }
