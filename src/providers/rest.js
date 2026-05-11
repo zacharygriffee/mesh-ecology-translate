@@ -16,13 +16,21 @@ import {
   DEFAULT_STRUCTURED_GRAMMAR_PROFILE,
   PORTABLE_INTENT_CLASSES as STRUCTURED_PORTABLE_INTENT_CLASSES,
   STRUCTURED_GRAMMAR_PROFILES,
+  buildGenericCandidateOutputSchema,
   buildStructuredProviderMessages,
   parseStructuredProviderOutput
 } from "./structured.js";
 
-export const DEFAULT_REST_MAX_TOKENS = 512;
+export const DEFAULT_REST_MAX_TOKENS = 1500;
 export const DEFAULT_REST_TEMPERATURE = 0.2;
-export const DEFAULT_REST_RESPONSE_FORMAT = Object.freeze({ type: "json_object" });
+export const DEFAULT_REST_RESPONSE_FORMAT = Object.freeze({
+  type: "json_schema",
+  json_schema: Object.freeze({
+    name: "translation_result",
+    strict: true,
+    schema: buildGenericCandidateOutputSchema()
+  })
+});
 export const DEFAULT_REST_STRUCTURED_GRAMMAR_PROFILE = DEFAULT_STRUCTURED_GRAMMAR_PROFILE;
 export const REST_STRUCTURED_GRAMMAR_PROFILES = STRUCTURED_GRAMMAR_PROFILES;
 export const PORTABLE_INTENT_CLASSES = STRUCTURED_PORTABLE_INTENT_CLASSES;

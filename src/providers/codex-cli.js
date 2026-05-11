@@ -11,101 +11,18 @@ import {
   isProviderError
 } from "../errors/index.js";
 import {
-  GENERIC_ACTION_FAMILIES,
-  GENERIC_CANDIDATE_SCHEMA_VERSION,
-  GENERIC_IDEMPOTENCY_VALUES,
-  GENERIC_REVERSIBILITY_VALUES,
-  GENERIC_TARGET_CLASSES,
-  REQUIRED_NON_AUTHORITY_FLAGS
-} from "../contracts/generic-candidate.js";
-import { executeWithRequestControl } from "./runtime.js";
-import {
   DEFAULT_STRUCTURED_GRAMMAR_PROFILE,
   STRUCTURED_GRAMMAR_PROFILES,
+  buildGenericCandidateOutputSchema,
   buildStructuredProviderPrompt,
   parseStructuredProviderOutput
 } from "./structured.js";
+import { executeWithRequestControl } from "./runtime.js";
 
 export const DEFAULT_CODEX_CLI_COMMAND = "codex";
 export const DEFAULT_CODEX_CLI_MODEL = "codex-cli";
 
-const CODEX_CLI_OUTPUT_SCHEMA = Object.freeze({
-  type: "object",
-  additionalProperties: false,
-  required: ["grammarCandidate", "confidence", "needsClarification", "ambiguities", "notes"],
-  properties: {
-    grammarCandidate: {
-      type: "object",
-      additionalProperties: false,
-      required: [
-        "schemaVersion",
-        "actionFamily",
-        "targetClass",
-        "targetRefs",
-        "confidence",
-        "ambiguities",
-        "unresolvedFields",
-        "idempotency",
-        "reversibility",
-        "requiredOperatorDecision",
-        "suggestedConsumerSurface",
-        "parameters",
-        "rawInterpretation",
-        "nonAuthority"
-      ],
-      properties: {
-        schemaVersion: { type: "string", const: GENERIC_CANDIDATE_SCHEMA_VERSION },
-        actionFamily: { type: "string", enum: GENERIC_ACTION_FAMILIES },
-        targetClass: { type: "string", enum: GENERIC_TARGET_CLASSES },
-        targetRefs: {
-          type: "array",
-          items: { type: "string" }
-        },
-        confidence: {
-          type: "number",
-          minimum: 0,
-          maximum: 1
-        },
-        ambiguities: {
-          type: "array",
-          items: { type: "string" }
-        },
-        unresolvedFields: {
-          type: "array",
-          items: { type: "string" }
-        },
-        idempotency: { type: "string", enum: GENERIC_IDEMPOTENCY_VALUES },
-        reversibility: { type: "string", enum: GENERIC_REVERSIBILITY_VALUES },
-        requiredOperatorDecision: { type: ["string", "null"] },
-        suggestedConsumerSurface: { type: ["string", "null"] },
-        nonAuthority: {
-          type: "object",
-          additionalProperties: false,
-          required: REQUIRED_NON_AUTHORITY_FLAGS,
-          properties: Object.fromEntries(
-            REQUIRED_NON_AUTHORITY_FLAGS.map((flag) => [flag, { type: "boolean", const: true }])
-          )
-        },
-        parameters: {
-          type: "object",
-          additionalProperties: false,
-          properties: {}
-        },
-        rawInterpretation: { type: ["string", "null"] }
-      }
-    },
-    confidence: { type: "number" },
-    needsClarification: { type: "boolean" },
-    ambiguities: {
-      type: "array",
-      items: { type: "string" }
-    },
-    notes: {
-      type: "array",
-      items: { type: "string" }
-    }
-  }
-});
+const CODEX_CLI_OUTPUT_SCHEMA = Object.freeze(buildGenericCandidateOutputSchema());
 
 function readStructuredGrammarProfile(options) {
   const configured =

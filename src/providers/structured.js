@@ -28,6 +28,86 @@ export const PORTABLE_INTENT_CLASSES = Object.freeze([
   "protected_operation"
 ]);
 
+export function buildGenericCandidateOutputSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["grammarCandidate", "confidence", "needsClarification", "ambiguities", "notes"],
+    properties: {
+      grammarCandidate: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "schemaVersion",
+          "actionFamily",
+          "targetClass",
+          "targetRefs",
+          "confidence",
+          "ambiguities",
+          "unresolvedFields",
+          "idempotency",
+          "reversibility",
+          "requiredOperatorDecision",
+          "suggestedConsumerSurface",
+          "parameters",
+          "rawInterpretation",
+          "nonAuthority"
+        ],
+        properties: {
+          schemaVersion: { type: "string", const: GENERIC_CANDIDATE_SCHEMA_VERSION },
+          actionFamily: { type: "string", enum: GENERIC_ACTION_FAMILIES },
+          targetClass: { type: "string", enum: GENERIC_TARGET_CLASSES },
+          targetRefs: {
+            type: "array",
+            items: { type: "string" }
+          },
+          confidence: {
+            type: "number",
+            minimum: 0,
+            maximum: 1
+          },
+          ambiguities: {
+            type: "array",
+            items: { type: "string" }
+          },
+          unresolvedFields: {
+            type: "array",
+            items: { type: "string" }
+          },
+          idempotency: { type: "string", enum: GENERIC_IDEMPOTENCY_VALUES },
+          reversibility: { type: "string", enum: GENERIC_REVERSIBILITY_VALUES },
+          requiredOperatorDecision: { type: ["string", "null"] },
+          suggestedConsumerSurface: { type: ["string", "null"] },
+          parameters: {
+            type: "object",
+            additionalProperties: false,
+            properties: {}
+          },
+          rawInterpretation: { type: ["string", "null"] },
+          nonAuthority: {
+            type: "object",
+            additionalProperties: false,
+            required: REQUIRED_NON_AUTHORITY_FLAGS,
+            properties: Object.fromEntries(
+              REQUIRED_NON_AUTHORITY_FLAGS.map((flag) => [flag, { type: "boolean", const: true }])
+            )
+          }
+        }
+      },
+      confidence: { type: "number" },
+      needsClarification: { type: "boolean" },
+      ambiguities: {
+        type: "array",
+        items: { type: "string" }
+      },
+      notes: {
+        type: "array",
+        items: { type: "string" }
+      }
+    }
+  };
+}
+
 const PORTABLE_INTENT_CLASS_SET = new Set(PORTABLE_INTENT_CLASSES);
 const INTENT_CLASS_SYNONYMS = new Map([
   ["device_control", "control"],

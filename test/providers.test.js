@@ -724,7 +724,13 @@ test("rest provider request body includes configured max_tokens and JSON respons
   assert.equal(calls[0].body.max_tokens, 128);
   assert.equal(calls[0].body.model, "remote-model");
   assert.equal(calls[0].body.messages.length, 2);
-  assert.deepEqual(calls[0].body.response_format, { type: "json_object" });
+  assert.equal(calls[0].body.response_format.type, "json_schema");
+  assert.equal(calls[0].body.response_format.json_schema.name, "translation_result");
+  assert.equal(calls[0].body.response_format.json_schema.strict, true);
+  assert.equal(
+    calls[0].body.response_format.json_schema.schema.properties.grammarCandidate.properties.schemaVersion.const,
+    "generic_candidate_v1"
+  );
   assert.match(calls[0].body.messages[0].content, /Return only valid JSON/);
   assert.match(calls[0].body.messages[0].content, /No markdown/);
   assert.match(calls[0].body.messages[0].content, /No reasoning/);
@@ -1386,7 +1392,8 @@ test("rest provider only sends extra body fields when explicitly supplied", asyn
   assert.equal("tools" in explicitProvider.calls[0].body, false);
   assert.equal("function_call" in explicitProvider.calls[0].body, false);
   assert.equal("stream" in explicitProvider.calls[0].body, false);
-  assert.deepEqual(explicitProvider.calls[0].body.response_format, { type: "json_object" });
+  assert.equal(explicitProvider.calls[0].body.response_format.type, "json_schema");
+  assert.equal(explicitProvider.calls[0].body.response_format.json_schema.name, "translation_result");
 });
 
 test("rest provider uses message content when reasoning_content is also present", async () => {
