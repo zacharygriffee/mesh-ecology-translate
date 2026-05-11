@@ -1,9 +1,16 @@
 export {
+  GENERIC_ACTION_FAMILIES,
+  GENERIC_CANDIDATE_SCHEMA_VERSION,
+  GENERIC_IDEMPOTENCY_VALUES,
+  GENERIC_REVERSIBILITY_VALUES,
+  GENERIC_TARGET_CLASSES,
   INPUT_TYPES,
   PROVIDER_PREFERENCES,
+  REQUIRED_NON_AUTHORITY_FLAGS,
   SECURITY_POSTURES,
   TRANSLATION_CONTEXT_FIELDS,
   TRANSLATION_PROFILES,
+  validateGenericCandidate,
   validateTranslationRequest,
   validateTranslationResult
 } from "./contracts/index.js";
@@ -18,6 +25,7 @@ export {
   RestProvider,
   buildPrompt,
   buildTranslationResult,
+  DEFAULT_OLLAMA_WARMUP_TIMEOUT_MS,
   runCodexCliCommand
 } from "./providers/index.js";
 export {

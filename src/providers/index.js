@@ -1,5 +1,5 @@
 export { ProviderAdapter, PROFILE_TEMPLATES, buildPrompt, buildTranslationResult } from "./base.js";
-export { OllamaProvider } from "./ollama.js";
+export { DEFAULT_OLLAMA_WARMUP_TIMEOUT_MS, OllamaProvider } from "./ollama.js";
 export {
   DEFAULT_REST_MAX_TOKENS,
   DEFAULT_REST_RESPONSE_FORMAT,
@@ -18,9 +18,11 @@ export {
 export { DEFAULT_PROVIDER_TIMEOUT_MS } from "./runtime.js";
 export {
   DEFAULT_STRUCTURED_GRAMMAR_PROFILE,
+  GENERIC_CANDIDATE_OUTPUT_SCHEMA,
   STRUCTURED_GRAMMAR_PROFILES,
   STRUCTURED_OUTPUT_SCHEMA,
   buildStructuredProviderMessages,
   buildStructuredProviderPrompt,
+  normalizeGenericCandidate,
   parseStructuredProviderOutput
 } from "./structured.js";

@@ -1,9 +1,22 @@
 import { extractPrimaryText } from "./base.js";
 import { validateTranslationResult } from "../contracts/index.js";
+import {
+  GENERIC_ACTION_FAMILIES,
+  GENERIC_CANDIDATE_SCHEMA_VERSION,
+  GENERIC_IDEMPOTENCY_VALUES,
+  GENERIC_REVERSIBILITY_VALUES,
+  GENERIC_TARGET_CLASSES,
+  REQUIRED_NON_AUTHORITY_FLAGS,
+  validateGenericCandidate
+} from "../contracts/generic-candidate.js";
 import { createProviderInvalidResponseError } from "../errors/index.js";
 
-export const DEFAULT_STRUCTURED_GRAMMAR_PROFILE = "portable_v1";
-export const STRUCTURED_GRAMMAR_PROFILES = Object.freeze(["portable_v1", "edge_v1"]);
+export const DEFAULT_STRUCTURED_GRAMMAR_PROFILE = GENERIC_CANDIDATE_SCHEMA_VERSION;
+export const STRUCTURED_GRAMMAR_PROFILES = Object.freeze([
+  GENERIC_CANDIDATE_SCHEMA_VERSION,
+  "portable_v1",
+  "edge_v1"
+]);
 export const PORTABLE_INTENT_CLASSES = Object.freeze([
   "control",
   "observe",
@@ -44,6 +57,94 @@ const IDEMPOTENCY_SYNONYMS = new Map([
 const ALLOWED_AUDIENCES = new Set(["bounded", "operator"]);
 const ALLOWED_AUTHORITY_HINTS = new Set(["none"]);
 const ALLOWED_CAPABILITY_HINTS = new Set(["publish_candidate"]);
+const GENERIC_ACTION_FAMILY_SET = new Set(GENERIC_ACTION_FAMILIES);
+const GENERIC_TARGET_CLASS_SET = new Set(GENERIC_TARGET_CLASSES);
+const GENERIC_IDEMPOTENCY_SET = new Set(GENERIC_IDEMPOTENCY_VALUES);
+const GENERIC_REVERSIBILITY_SET = new Set(GENERIC_REVERSIBILITY_VALUES);
+const GENERIC_NON_AUTHORITY = Object.freeze(
+  Object.fromEntries(REQUIRED_NON_AUTHORITY_FLAGS.map((flag) => [flag, true]))
+);
+const GENERIC_ACTION_SYNONYMS = new Map([
+  ["status", "inspect_status"],
+  ["show_status", "inspect_status"],
+  ["current_status", "inspect_status"],
+  ["get_status", "inspect_status"],
+  ["read_status", "inspect_status"],
+  ["observe", "inspect_status"],
+  ["ready", "list_ready_targets"],
+  ["list_ready", "list_ready_targets"],
+  ["ready_targets", "list_ready_targets"],
+  ["whats_ready", "list_ready_targets"],
+  ["what_s_ready", "list_ready_targets"],
+  ["call_for_response", "call_for_responses"],
+  ["request_responses", "call_for_responses"],
+  ["collect_responses", "call_for_responses"],
+  ["follow_on", "prepare_follow_on_action"],
+  ["next_action", "prepare_follow_on_action"],
+  ["prepare_next_action", "prepare_follow_on_action"],
+  ["review", "review_evidence"],
+  ["review_claim", "review_evidence"],
+  ["compare", "compare_evidence"],
+  ["clarify", "request_clarification"],
+  ["ask_clarification", "request_clarification"],
+  ["ask_operator", "request_clarification"],
+  ["stop", "stop_or_hold"],
+  ["hold", "stop_or_hold"],
+  ["pause", "stop_or_hold"],
+  ["control", "consumer_defined"],
+  ["device_control", "consumer_defined"],
+  ["turn_on", "consumer_defined"],
+  ["turn_off", "consumer_defined"]
+]);
+const GENERIC_TARGET_CLASS_SYNONYMS = new Map([
+  ["repository", "repo"],
+  ["pull_request", "issue"],
+  ["pr", "issue"],
+  ["claim", "evidence"],
+  ["file", "document"],
+  ["doc", "document"],
+  ["operator", "operator_context"],
+  ["context", "operator_context"],
+  ["unknown_target", "unknown"]
+]);
+const GENERIC_IDEMPOTENCY_SYNONYMS = new Map([
+  ["repeatable", "idempotent"],
+  ["read_only", "idempotent"],
+  ["readonly", "idempotent"],
+  ["not_applicable", "idempotent"],
+  ["not_applicable_read", "idempotent"],
+  ["not_idempotent", "non_idempotent"],
+  ["non-idempotent", "non_idempotent"],
+  ["unsafe_repeat", "non_idempotent"]
+]);
+const GENERIC_REVERSIBILITY_SYNONYMS = new Map([
+  ["not_reversible", "irreversible"],
+  ["non_reversible", "irreversible"],
+  ["unknown_reversibility", "unknown"]
+]);
+
+export const GENERIC_CANDIDATE_OUTPUT_SCHEMA = Object.freeze({
+  grammarCandidate: {
+    schemaVersion: GENERIC_CANDIDATE_SCHEMA_VERSION,
+    actionFamily: GENERIC_ACTION_FAMILIES.join("|"),
+    targetClass: GENERIC_TARGET_CLASSES.join("|"),
+    targetRefs: [],
+    confidence: 0,
+    ambiguities: [],
+    unresolvedFields: [],
+    idempotency: GENERIC_IDEMPOTENCY_VALUES.join("|"),
+    reversibility: GENERIC_REVERSIBILITY_VALUES.join("|"),
+    requiredOperatorDecision: "string optional",
+    suggestedConsumerSurface: "string optional",
+    nonAuthority: GENERIC_NON_AUTHORITY,
+    rawInterpretation: "string",
+    parameters: {}
+  },
+  confidence: 0,
+  needsClarification: false,
+  ambiguities: [],
+  notes: []
+});
 
 export const STRUCTURED_OUTPUT_SCHEMA = Object.freeze({
   grammarCandidate: {
@@ -176,7 +277,42 @@ function buildCompactStructuredContext(context) {
 
 export function buildStructuredProviderMessages(request, { structuredGrammarProfile }) {
   const compactContext = buildCompactStructuredContext(request.context);
-  const schema = JSON.stringify(STRUCTURED_OUTPUT_SCHEMA);
+  const usesGenericCandidate = structuredGrammarProfile === GENERIC_CANDIDATE_SCHEMA_VERSION;
+  const schema = JSON.stringify(
+    usesGenericCandidate ? GENERIC_CANDIDATE_OUTPUT_SCHEMA : STRUCTURED_OUTPUT_SCHEMA
+  );
+
+  if (usesGenericCandidate) {
+    return [
+      {
+        role: "system",
+        content: [
+          "You translate operator input into a provider-neutral generic candidate interpretation.",
+          `Profile: ${structuredGrammarProfile}.`,
+          "Return only valid JSON. No markdown. No prose. No code fences. No reasoning. No explanations.",
+          `grammarCandidate.schemaVersion must be ${GENERIC_CANDIDATE_SCHEMA_VERSION}.`,
+          `actionFamily enum: ${GENERIC_ACTION_FAMILIES.join(", ")}.`,
+          `targetClass enum: ${GENERIC_TARGET_CLASSES.join(", ")}.`,
+          "Use request_clarification for unclear action, target, or context instead of failing.",
+          "Unknown targets must use targetClass unknown, targetRefs [], populated unresolvedFields, and requiredOperatorDecision.",
+          `idempotency enum: ${GENERIC_IDEMPOTENCY_VALUES.join(", ")}.`,
+          `reversibility enum: ${GENERIC_REVERSIBILITY_VALUES.join(", ")}.`,
+          "nonAuthority flags must all be true: doesNotApprove, doesNotExecute, doesNotMutate, doesNotSelectTruth, consumerOwnsAuthority.",
+          "Do not approve, execute, mutate, select truth, call tools, or map to consumer-specific commands."
+        ].join(" ")
+      },
+      {
+        role: "user",
+        content: [
+          `profile: ${request.profile}`,
+          `securityPosture: ${request.securityPosture}`,
+          `input: ${extractPrimaryText(request)}`,
+          `context: ${compactContext ? JSON.stringify(compactContext) : "none"}`,
+          `schema: ${schema}`
+        ].join("\n")
+      }
+    ];
+  }
 
   return [
     {
@@ -548,6 +684,386 @@ function normalizeAmbiguity(value, provider) {
   };
 }
 
+function normalizeGenericToken(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_+/g, "_");
+}
+
+function normalizeGenericStringArray(value, { path, fallback = [], provider }) {
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+
+  if (typeof value === "string") {
+    return value.trim().length > 0 ? [value] : fallback;
+  }
+
+  assertStringArray(value, path, provider);
+  return value;
+}
+
+function normalizeGenericActionFamily(value, provider) {
+  if (value === undefined || value === null) {
+    return {
+      actionFamily: "request_clarification",
+      unresolvedField: "actionFamily",
+      ambiguity: "The requested action family was not clear."
+    };
+  }
+
+  assertNonEmptyString(value, "grammarCandidate.actionFamily", provider);
+  const normalized = normalizeGenericToken(value);
+
+  if (GENERIC_ACTION_FAMILY_SET.has(normalized)) {
+    return { actionFamily: normalized };
+  }
+
+  if (GENERIC_ACTION_SYNONYMS.has(normalized)) {
+    return {
+      actionFamily: GENERIC_ACTION_SYNONYMS.get(normalized),
+      rawActionFamily: value,
+      normalizedFrom: "actionFamily"
+    };
+  }
+
+  return {
+    actionFamily: "request_clarification",
+    rawActionFamily: value,
+    normalizedFrom: "actionFamily",
+    unresolvedField: "actionFamily",
+    ambiguity: `Unsupported action family "${value}" requires consumer clarification.`
+  };
+}
+
+function normalizeGenericTargetClass(value, provider) {
+  if (value === undefined || value === null) {
+    return {
+      targetClass: "unknown",
+      unresolvedField: "targetClass",
+      ambiguity: "The target class was not clear."
+    };
+  }
+
+  assertNonEmptyString(value, "grammarCandidate.targetClass", provider);
+  const normalized = normalizeGenericToken(value);
+
+  if (GENERIC_TARGET_CLASS_SET.has(normalized)) {
+    return { targetClass: normalized };
+  }
+
+  if (GENERIC_TARGET_CLASS_SYNONYMS.has(normalized)) {
+    return {
+      targetClass: GENERIC_TARGET_CLASS_SYNONYMS.get(normalized),
+      rawTargetClass: value,
+      normalizedFrom: "targetClass"
+    };
+  }
+
+  return {
+    targetClass: "unknown",
+    rawTargetClass: value,
+    normalizedFrom: "targetClass",
+    unresolvedField: "targetClass",
+    ambiguity: `Unsupported target class "${value}" requires consumer clarification.`
+  };
+}
+
+function normalizeGenericIdempotency(value, { actionFamily, provider }) {
+  if (value === undefined || value === null) {
+    return ["inspect_status", "list_ready_targets", "review_evidence", "compare_evidence", "request_clarification", "stop_or_hold"].includes(actionFamily)
+      ? "idempotent"
+      : "conditional";
+  }
+
+  assertNonEmptyString(value, "grammarCandidate.idempotency", provider);
+  const normalized = normalizeGenericToken(value);
+
+  if (GENERIC_IDEMPOTENCY_SYNONYMS.has(normalized)) {
+    return GENERIC_IDEMPOTENCY_SYNONYMS.get(normalized);
+  }
+
+  if (GENERIC_IDEMPOTENCY_SET.has(normalized)) {
+    return normalized;
+  }
+
+  throw createInvalidStructuredResponseError(
+    provider,
+    `grammarCandidate.idempotency must be one of: ${GENERIC_IDEMPOTENCY_VALUES.join(", ")}.`
+  );
+}
+
+function normalizeGenericReversibility(value, { actionFamily, provider }) {
+  if (value === undefined || value === null) {
+    return actionFamily === "consumer_defined" ? "unknown" : "reversible";
+  }
+
+  assertNonEmptyString(value, "grammarCandidate.reversibility", provider);
+  const normalized = normalizeGenericToken(value);
+
+  if (GENERIC_REVERSIBILITY_SYNONYMS.has(normalized)) {
+    return GENERIC_REVERSIBILITY_SYNONYMS.get(normalized);
+  }
+
+  if (GENERIC_REVERSIBILITY_SET.has(normalized)) {
+    return normalized;
+  }
+
+  throw createInvalidStructuredResponseError(
+    provider,
+    `grammarCandidate.reversibility must be one of: ${GENERIC_REVERSIBILITY_VALUES.join(", ")}.`
+  );
+}
+
+function normalizeGenericTargetRefs(value, provider) {
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  if (typeof value === "string") {
+    const label = value.trim();
+    return label ? [{ label }] : [];
+  }
+
+  if (!Array.isArray(value)) {
+    return [compactJsonValue(value)].filter((item) => item !== undefined);
+  }
+
+  return value
+    .map((item) => {
+      if (typeof item === "string") {
+        const label = item.trim();
+        return label ? { label } : null;
+      }
+
+      const compact = compactJsonValue(item);
+      return compact === undefined ? null : compact;
+    })
+    .filter((item) => item !== null);
+}
+
+function normalizeGenericNonAuthority(value, provider) {
+  if (value !== undefined && value !== null) {
+    if (!isPlainObject(value)) {
+      throw createInvalidStructuredResponseError(provider, "grammarCandidate.nonAuthority must be an object.");
+    }
+
+    for (const flag of REQUIRED_NON_AUTHORITY_FLAGS) {
+      if (value[flag] !== undefined && value[flag] !== true) {
+        throw createInvalidStructuredResponseError(
+          provider,
+          `grammarCandidate.nonAuthority.${flag} must be true.`
+        );
+      }
+    }
+  }
+
+  return { ...GENERIC_NON_AUTHORITY };
+}
+
+function assertNoGenericAuthorityClaims(grammarCandidate, provider) {
+  const blockedFields = [
+    "approval",
+    "approved",
+    "authority",
+    "authorityHint",
+    "authorization",
+    "authorized",
+    "capabilities",
+    "capabilityHints",
+    "command",
+    "commands",
+    "execute",
+    "executes",
+    "execution",
+    "executionMode",
+    "mutates",
+    "mutatesRepo",
+    "mutation",
+    "selectedTruth",
+    "toolCalls",
+    "tools",
+    "truthSelection"
+  ];
+
+  for (const field of blockedFields) {
+    if (grammarCandidate[field] !== undefined) {
+      throw createInvalidStructuredResponseError(
+        provider,
+        `grammarCandidate.${field} is not allowed on generic candidates.`
+      );
+    }
+  }
+}
+
+function readGenericConfidence(parsed, grammarCandidate, provider) {
+  const confidence = grammarCandidate.confidence ?? parsed.confidence;
+
+  if (
+    typeof confidence !== "number" ||
+    !Number.isFinite(confidence) ||
+    confidence < 0 ||
+    confidence > 1
+  ) {
+    throw createInvalidStructuredResponseError(provider, "confidence must be a number between 0 and 1.");
+  }
+
+  return confidence;
+}
+
+function readOptionalGenericString(value, path, provider) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  assertNonEmptyString(value, path, provider);
+  return value;
+}
+
+export function normalizeGenericCandidate({ parsed, request, provider, templateId, structuredGrammarProfile }) {
+  const rawCandidate = parsed.grammarCandidate;
+  assertNoGenericAuthorityClaims(rawCandidate, provider);
+
+  const action = normalizeGenericActionFamily(
+    rawCandidate.actionFamily ?? rawCandidate.action ?? rawCandidate.intentClass ?? rawCandidate.intent,
+    provider
+  );
+  const targetClass = normalizeGenericTargetClass(
+    rawCandidate.targetClass ?? rawCandidate.targetType,
+    provider
+  );
+  let actionFamily = action.actionFamily;
+  const targetRefs = normalizeGenericTargetRefs(rawCandidate.targetRefs ?? rawCandidate.target, provider);
+  const confidence = readGenericConfidence(parsed, rawCandidate, provider);
+  const ambiguities = normalizeGenericStringArray(rawCandidate.ambiguities ?? parsed.ambiguities, {
+    path: "grammarCandidate.ambiguities",
+    fallback: [],
+    provider
+  });
+  const unresolvedFields = normalizeGenericStringArray(rawCandidate.unresolvedFields, {
+    path: "grammarCandidate.unresolvedFields",
+    fallback: [],
+    provider
+  });
+  const notes = normalizeGenericStringArray(parsed.notes, {
+    path: "notes",
+    fallback: [],
+    provider
+  });
+
+  if (action.unresolvedField && !unresolvedFields.includes(action.unresolvedField)) {
+    unresolvedFields.push(action.unresolvedField);
+  }
+
+  if (targetClass.unresolvedField && !unresolvedFields.includes(targetClass.unresolvedField)) {
+    unresolvedFields.push(targetClass.unresolvedField);
+  }
+
+  for (const ambiguity of [action.ambiguity, targetClass.ambiguity]) {
+    if (ambiguity && !ambiguities.includes(ambiguity)) {
+      ambiguities.push(ambiguity);
+    }
+  }
+
+  if (targetClass.targetClass === "unknown") {
+    if (!unresolvedFields.includes("targetRefs")) {
+      unresolvedFields.push("targetRefs");
+    }
+
+    if (actionFamily === "consumer_defined") {
+      actionFamily = "request_clarification";
+    }
+  }
+
+  const needsClarification =
+    parsed.needsClarification === true ||
+    actionFamily === "request_clarification" ||
+    targetClass.targetClass === "unknown" ||
+    unresolvedFields.length > 0;
+
+  if (parsed.needsClarification !== undefined && typeof parsed.needsClarification !== "boolean") {
+    throw createInvalidStructuredResponseError(provider, "needsClarification must be a boolean.");
+  }
+
+  let requiredOperatorDecision = readOptionalGenericString(
+    rawCandidate.requiredOperatorDecision,
+    "grammarCandidate.requiredOperatorDecision",
+    provider
+  );
+
+  if (!requiredOperatorDecision && targetClass.targetClass === "unknown") {
+    requiredOperatorDecision = "Clarify the intended target or context before any consumer maps this candidate.";
+  }
+
+  if (!requiredOperatorDecision && actionFamily === "request_clarification") {
+    requiredOperatorDecision = "Clarify the intended action before any consumer maps this candidate.";
+  }
+
+  const candidate = {
+    version: "v1",
+    profile: request.profile,
+    sourceText: extractPrimaryText(request),
+    template: templateId,
+    continuity: request.continuity ?? null,
+    context: request.context ?? null,
+    schemaVersion: GENERIC_CANDIDATE_SCHEMA_VERSION,
+    actionFamily,
+    targetClass: targetClass.targetClass,
+    targetRefs: targetClass.targetClass === "unknown" ? [] : targetRefs,
+    confidence,
+    ambiguities,
+    unresolvedFields,
+    idempotency: normalizeGenericIdempotency(rawCandidate.idempotency, { actionFamily, provider }),
+    reversibility: normalizeGenericReversibility(rawCandidate.reversibility, { actionFamily, provider }),
+    ...(requiredOperatorDecision ? { requiredOperatorDecision } : {}),
+    ...(rawCandidate.suggestedConsumerSurface !== undefined
+      ? {
+          suggestedConsumerSurface: readOptionalGenericString(
+            rawCandidate.suggestedConsumerSurface,
+            "grammarCandidate.suggestedConsumerSurface",
+            provider
+          )
+        }
+      : {}),
+    nonAuthority: normalizeGenericNonAuthority(rawCandidate.nonAuthority, provider),
+    rawInterpretation:
+      readOptionalGenericString(rawCandidate.rawInterpretation, "grammarCandidate.rawInterpretation", provider) ??
+      extractPrimaryText(request),
+    parameters: isPlainObject(rawCandidate.parameters) ? rawCandidate.parameters : {},
+    metadata: {
+      structured: true,
+      structuredGrammarProfile,
+      rawGrammarCandidate: rawCandidate,
+      ...(action.normalizedFrom
+        ? {
+            normalizedActionFamilyFrom: action.normalizedFrom,
+            rawActionFamily: action.rawActionFamily
+          }
+        : {}),
+      ...(targetClass.normalizedFrom
+        ? {
+            normalizedTargetClassFrom: targetClass.normalizedFrom,
+            rawTargetClass: targetClass.rawTargetClass
+          }
+        : {})
+    }
+  };
+
+  validateGenericCandidate(candidate);
+
+  return {
+    grammarCandidate: candidate,
+    confidence,
+    ambiguities,
+    needsClarification,
+    notes
+  };
+}
+
 function createRedactedContentPrefix(content) {
   return content
     .slice(0, REDACTED_CONTENT_PREFIX_LENGTH)
@@ -589,6 +1105,32 @@ export function parseStructuredProviderOutput({
 
   if (!isPlainObject(parsed.grammarCandidate)) {
     throw createInvalidStructuredResponseError(provider, "grammarCandidate must be an object.");
+  }
+
+  const usesGenericCandidate =
+    parsed.grammarCandidate.schemaVersion === GENERIC_CANDIDATE_SCHEMA_VERSION ||
+    parsed.grammarCandidate.actionFamily !== undefined ||
+    (structuredGrammarProfile === GENERIC_CANDIDATE_SCHEMA_VERSION &&
+      parsed.grammarCandidate.intentClass === undefined &&
+      parsed.grammarCandidate.intent === undefined);
+
+  if (usesGenericCandidate) {
+    const normalized = normalizeGenericCandidate({
+      parsed,
+      request,
+      provider,
+      templateId,
+      structuredGrammarProfile
+    });
+
+    return validateTranslationResult({
+      ...normalized,
+      providerInfo: {
+        provider,
+        model,
+        latency
+      }
+    });
   }
 
   const normalizedIntent = normalizeIntentClass(parsed.grammarCandidate, provider);

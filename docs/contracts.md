@@ -46,7 +46,7 @@ Context is translation input only. It may help providers interpret user text, bu
 
 Fields:
 
-- `grammarCandidate`: opaque object for downstream consumers
+- `grammarCandidate`: portable candidate object for downstream consumers
 - `confidence`: number from `0` to `1`
 - `ambiguities`: array of strings
 - `needsClarification`: boolean
@@ -56,9 +56,13 @@ Fields:
   - `model`
   - `latency` optional
 
-The grammar candidate is portable provider output. Structured command results are normalized before return so REST/OpenAI-compatible providers, Ollama, and future adapters can expose the same contract-level shape.
+The grammar candidate is portable provider output. Structured provider results are normalized before return so REST/OpenAI-compatible providers, Ollama, codex-cli, and future adapters can expose the same contract-level shape.
 
-Structured grammar candidates include fields such as `version`, `profile`, `sourceText`, `intentClass`, `action`, object-shaped `target`, object-shaped `scope` when present, `idempotency`, `consequenceClass`, `execution`, `success`, and provenance or metadata.
+The default structured candidate schema is `generic_candidate_v1`. It includes `actionFamily`, `targetClass`, `targetRefs`, candidate-level `confidence`, `ambiguities`, `unresolvedFields`, `idempotency`, `reversibility`, optional clarification fields, and required `nonAuthority` flags. When `schemaVersion` is `generic_candidate_v1`, public `validateTranslationResult` deeply validates the candidate.
+
+Unknown targets are valid bounded candidates. They use `targetClass: "unknown"`, `targetRefs: []`, populated `unresolvedFields`, and a `requiredOperatorDecision`; when the action or target cannot be mapped safely, the normalized `actionFamily` is `request_clarification`.
+
+Legacy structured grammar candidates with fields such as `intentClass`, `action`, object-shaped `target`, `scope`, `idempotency`, `consequenceClass`, `execution`, and `success` remain adapter compatibility behavior, but they are not the default provider prompt.
 
 Free-text interpretation is legacy behavior and is not a successful command/profile result unless explicitly represented as clarification or error. See [Provider Policy](./provider-policy.md).
 

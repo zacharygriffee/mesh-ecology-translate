@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  validateGenericCandidate,
   TRANSLATION_CONTEXT_FIELDS,
   validateTranslationRequest,
   validateTranslationResult
@@ -35,6 +36,28 @@ function createResult(overrides = {}) {
       provider: "ollama",
       model: "llama3.2:3b",
       latency: 12
+    },
+    ...overrides
+  };
+}
+
+function createGenericCandidate(overrides = {}) {
+  return {
+    schemaVersion: "generic_candidate_v1",
+    actionFamily: "inspect_status",
+    targetClass: "operator_context",
+    targetRefs: [{ label: "current operator context" }],
+    confidence: 0.82,
+    ambiguities: [],
+    unresolvedFields: [],
+    idempotency: "idempotent",
+    reversibility: "reversible",
+    nonAuthority: {
+      doesNotApprove: true,
+      doesNotExecute: true,
+      doesNotMutate: true,
+      doesNotSelectTruth: true,
+      consumerOwnsAuthority: true
     },
     ...overrides
   };
@@ -160,5 +183,41 @@ test("validateTranslationResult rejects out-of-range confidence", () => {
   assert.throws(
     () => validateTranslationResult(createResult({ confidence: 1.5 })),
     /must be a number between 0 and 1/
+  );
+});
+
+test("validateGenericCandidate accepts generic_candidate_v1", () => {
+  assert.doesNotThrow(() => validateGenericCandidate(createGenericCandidate()));
+});
+
+test("validateTranslationResult deeply validates generic_candidate_v1 when present", () => {
+  assert.throws(
+    () =>
+      validateTranslationResult(
+        createResult({
+          grammarCandidate: createGenericCandidate({
+            actionFamily: "execute_command"
+          })
+        })
+      ),
+    /actionFamily/
+  );
+
+  assert.throws(
+    () =>
+      validateTranslationResult(
+        createResult({
+          grammarCandidate: createGenericCandidate({
+            nonAuthority: {
+              doesNotApprove: true,
+              doesNotExecute: false,
+              doesNotMutate: true,
+              doesNotSelectTruth: true,
+              consumerOwnsAuthority: true
+            }
+          })
+        })
+      ),
+    /doesNotExecute/
   );
 });

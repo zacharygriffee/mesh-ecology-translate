@@ -80,6 +80,41 @@ function createStructuredRestContent(overrides = {}) {
   });
 }
 
+function createGenericRestContent(overrides = {}) {
+  const { grammarCandidate = {}, ...resultOverrides } = overrides;
+  const confidence = resultOverrides.confidence ?? grammarCandidate.confidence ?? 0.84;
+  const ambiguities = resultOverrides.ambiguities ?? grammarCandidate.ambiguities ?? [];
+
+  return JSON.stringify({
+    grammarCandidate: {
+      schemaVersion: "generic_candidate_v1",
+      actionFamily: "review_evidence",
+      targetClass: "document",
+      targetRefs: [{ label: "habitat report" }],
+      confidence,
+      ambiguities,
+      unresolvedFields: [],
+      idempotency: "idempotent",
+      reversibility: "reversible",
+      nonAuthority: {
+        doesNotApprove: true,
+        doesNotExecute: true,
+        doesNotMutate: true,
+        doesNotSelectTruth: true,
+        consumerOwnsAuthority: true
+      },
+      rawInterpretation: "Review the habitat report as candidate evidence.",
+      parameters: {},
+      ...grammarCandidate
+    },
+    confidence,
+    needsClarification: false,
+    ambiguities,
+    notes: [],
+    ...resultOverrides
+  });
+}
+
 function createCapturingRestProvider(options = {}) {
   const calls = [];
   const {
@@ -94,7 +129,7 @@ function createCapturingRestProvider(options = {}) {
         choices: [
           {
             message: {
-              content: createStructuredRestContent()
+              content: createGenericRestContent()
             }
           }
         ]
@@ -182,14 +217,14 @@ async function withTemporaryEnv(values, callback) {
 
 test("codex-cli provider returns a valid structured command result", async () => {
   const { calls, runner } = createMockCodexRunner({
-    outputContent: createStructuredRestContent({
+    outputContent: createGenericRestContent({
       confidence: 0.92,
       grammarCandidate: {
-        intentClass: "control",
-        action: "turn_off",
-        target: "yard lights",
-        scope: "yard",
-        idempotency: "repeatable",
+        actionFamily: "consumer_defined",
+        targetClass: "device",
+        targetRefs: [{ label: "yard lights" }],
+        idempotency: "conditional",
+        reversibility: "unknown",
         rawInterpretation: "Deactivate all yard lighting devices"
       }
     })
@@ -211,15 +246,13 @@ test("codex-cli provider returns a valid structured command result", async () =>
   assert.equal(result.providerInfo.model, "gpt-5.4-codex");
   assert.equal(result.confidence, 0.92);
   assert.notEqual(result.confidence, 0.72);
-  assert.equal(result.grammarCandidate.intentClass, "control");
-  assert.equal(result.grammarCandidate.action, "turn_off");
-  assert.deepEqual(result.grammarCandidate.target, {
-    actorGroup: "yard_lights",
-    selectedActorIds: [],
-    desiredState: "off"
-  });
-  assert.deepEqual(result.grammarCandidate.scope, { area: "yard" });
+  assert.equal(result.grammarCandidate.schemaVersion, "generic_candidate_v1");
+  assert.equal(result.grammarCandidate.actionFamily, "consumer_defined");
+  assert.equal(result.grammarCandidate.targetClass, "device");
+  assert.deepEqual(result.grammarCandidate.targetRefs, [{ label: "yard lights" }]);
   assert.equal(result.grammarCandidate.idempotency, "conditional");
+  assert.equal(result.grammarCandidate.reversibility, "unknown");
+  assert.equal(result.grammarCandidate.nonAuthority.doesNotExecute, true);
 
   assert.equal(calls.length, 2);
   const execCall = calls[1];
@@ -245,7 +278,8 @@ test("codex-cli provider returns a valid structured command result", async () =>
   assert.equal(execCall.args.includes("--dangerously-bypass-approvals-and-sandbox"), false);
   assert.match(execCall.input, /Return only valid JSON/);
   assert.match(execCall.input, /No reasoning/);
-  assert.match(execCall.input, /target must be an object/);
+  assert.match(execCall.input, /generic_candidate_v1/);
+  assert.match(execCall.input, /nonAuthority/);
 });
 
 test("prompt and grammar candidate include explicit context as translation input only", async () => {
@@ -495,9 +529,9 @@ test(
 
     validateTranslationResult(result);
     assert.equal(result.providerInfo.provider, "codex-cli");
-    assert.equal(result.grammarCandidate.intentClass, "control");
-    assert.equal(result.grammarCandidate.action, "turn_off");
-    assert.equal(result.grammarCandidate.target.actorGroup, "yard_lights");
+    assert.equal(result.grammarCandidate.schemaVersion, "generic_candidate_v1");
+    assert.equal(result.grammarCandidate.actionFamily, "consumer_defined");
+    assert.equal(result.grammarCandidate.targetClass, "device");
   }
 );
 
@@ -550,10 +584,12 @@ test("rest provider returns a valid structure with a mocked OpenAI-compatible re
         choices: [
           {
             message: {
-              content: createStructuredRestContent({
+              content: createGenericRestContent({
                 confidence: 0.88,
                 grammarCandidate: {
-                  intentClass: "generate",
+                  actionFamily: "review_evidence",
+                  targetClass: "document",
+                  targetRefs: [{ label: "habitat report" }],
                   rawInterpretation: "Summarize the habitat report."
                 }
               })
@@ -571,11 +607,10 @@ test("rest provider returns a valid structure with a mocked OpenAI-compatible re
 
   validateTranslationResult(result);
   assert.equal(result.providerInfo.provider, "rest");
-  assert.equal(result.grammarCandidate.intentClass, "generate");
-  assert.deepEqual(result.grammarCandidate.target, {
-    actorGroup: "habitat_report",
-    selectedActorIds: []
-  });
+  assert.equal(result.grammarCandidate.schemaVersion, "generic_candidate_v1");
+  assert.equal(result.grammarCandidate.actionFamily, "review_evidence");
+  assert.equal(result.grammarCandidate.targetClass, "document");
+  assert.deepEqual(result.grammarCandidate.targetRefs, [{ label: "habitat report" }]);
   assert.equal(result.grammarCandidate.rawInterpretation, "Summarize the habitat report.");
   assert.equal(result.confidence, 0.88);
 });
@@ -660,15 +695,473 @@ test("rest provider request body includes configured max_tokens and JSON respons
   assert.match(calls[0].body.messages[0].content, /No markdown/);
   assert.match(calls[0].body.messages[0].content, /No reasoning/);
   assert.match(calls[0].body.messages[0].content, /No explanations/);
-  assert.match(calls[0].body.messages[0].content, /intentClass/);
-  assert.match(calls[0].body.messages[0].content, /target must be an object/);
-  assert.match(calls[0].body.messages[0].content, /scope must be an object or null/);
-  assert.match(calls[0].body.messages[0].content, /idempotency "conditional"/);
-  assert.match(calls[0].body.messages[0].content, /control/);
-  assert.match(calls[0].body.messages[0].content, /observe/);
-  assert.match(calls[0].body.messages[0].content, /selectedActorIds/);
-  assert.match(calls[0].body.messages[0].content, /authorityHint must be none/);
+  assert.match(calls[0].body.messages[0].content, /generic_candidate_v1/);
+  assert.match(calls[0].body.messages[0].content, /actionFamily/);
+  assert.match(calls[0].body.messages[0].content, /targetClass/);
+  assert.match(calls[0].body.messages[0].content, /targetRefs/);
+  assert.match(calls[0].body.messages[0].content, /request_clarification/);
+  assert.match(calls[0].body.messages[0].content, /nonAuthority/);
+  assert.match(calls[0].body.messages[0].content, /doesNotExecute/);
   assert.match(calls[0].body.messages[1].content, /rawInterpretation/);
+});
+
+test("generic action families validate through REST structured normalization", async () => {
+  for (const actionFamily of [
+    "inspect_status",
+    "list_ready_targets",
+    "call_for_responses",
+    "prepare_follow_on_action",
+    "review_evidence",
+    "compare_evidence",
+    "request_clarification",
+    "stop_or_hold",
+    "consumer_defined"
+  ]) {
+    const provider = new RestProvider({
+      baseUrl: "https://example.test/v1",
+      apiKey: "secret",
+      model: "remote-model",
+      fetchImpl: async () =>
+        createJsonResponse({
+          choices: [
+            {
+              message: {
+                content: createGenericRestContent({
+                  grammarCandidate: {
+                    actionFamily,
+                    targetClass: actionFamily === "request_clarification" ? "unknown" : "operator_context",
+                    targetRefs: actionFamily === "request_clarification" ? [] : [{ label: "operator context" }],
+                    unresolvedFields: actionFamily === "request_clarification" ? ["targetRefs"] : [],
+                    requiredOperatorDecision:
+                      actionFamily === "request_clarification" ? "Clarify the target." : undefined
+                  },
+                  needsClarification: actionFamily === "request_clarification"
+                })
+              }
+            }
+          ]
+        })
+    });
+
+    const result = await provider.translate(createRequest({ provider: "rest" }));
+    validateTranslationResult(result);
+    assert.equal(result.grammarCandidate.actionFamily, actionFamily);
+  }
+});
+
+test("generic provider gauntlet prompts normalize as bounded candidates", async () => {
+  const cases = [
+    {
+      input: "What’s ready for me to handle next?",
+      actionFamily: "list_ready_targets",
+      targetClass: "operator_context",
+      targetRefs: [{ label: "operator queue" }]
+    },
+    {
+      input: "Show me current status.",
+      actionFamily: "inspect_status",
+      targetClass: "operator_context",
+      targetRefs: [{ label: "current status" }]
+    },
+    {
+      input: "Call for responses on the pending review.",
+      actionFamily: "call_for_responses",
+      targetClass: "issue",
+      targetRefs: [{ label: "pending review" }]
+    },
+    {
+      input: "Prepare the next follow-on action, but don’t execute it.",
+      actionFamily: "prepare_follow_on_action",
+      targetClass: "operator_context",
+      targetRefs: [{ label: "next follow-on action" }],
+      idempotency: "conditional"
+    },
+    {
+      input: "Review the evidence for this claim.",
+      actionFamily: "review_evidence",
+      targetClass: "evidence",
+      targetRefs: [{ label: "this claim" }]
+    },
+    {
+      input: "Compare the two evidence packets.",
+      actionFamily: "compare_evidence",
+      targetClass: "evidence",
+      targetRefs: [{ label: "two evidence packets" }]
+    },
+    {
+      input: "I’m not sure which target I mean. Ask me.",
+      actionFamily: "request_clarification",
+      targetClass: "unknown",
+      targetRefs: [],
+      unresolvedFields: ["targetRefs"],
+      requiredOperatorDecision: "Clarify the intended target."
+    },
+    {
+      input: "Stop. Hold everything.",
+      actionFamily: "stop_or_hold",
+      targetClass: "operator_context",
+      targetRefs: [{ label: "current operator activity" }]
+    },
+    {
+      input: "Turn off the yard lights.",
+      actionFamily: "consumer_defined",
+      targetClass: "device",
+      targetRefs: [{ label: "yard lights" }],
+      idempotency: "conditional",
+      reversibility: "unknown"
+    },
+    {
+      input: "Do the thing we discussed.",
+      actionFamily: "request_clarification",
+      targetClass: "unknown",
+      targetRefs: [],
+      unresolvedFields: ["targetRefs", "actionFamily"],
+      requiredOperatorDecision: "Clarify the intended action and target."
+    }
+  ];
+
+  for (const testCase of cases) {
+    const provider = new RestProvider({
+      baseUrl: "https://example.test/v1",
+      apiKey: "secret",
+      model: "remote-model",
+      fetchImpl: async () =>
+        createJsonResponse({
+          choices: [
+            {
+              message: {
+                content: createGenericRestContent({
+                  grammarCandidate: {
+                    actionFamily: testCase.actionFamily,
+                    targetClass: testCase.targetClass,
+                    targetRefs: testCase.targetRefs,
+                    unresolvedFields: testCase.unresolvedFields ?? [],
+                    idempotency: testCase.idempotency,
+                    reversibility: testCase.reversibility,
+                    requiredOperatorDecision: testCase.requiredOperatorDecision,
+                    rawInterpretation: testCase.input
+                  },
+                  needsClarification: testCase.actionFamily === "request_clarification"
+                })
+              }
+            }
+          ]
+        })
+    });
+
+    const result = await provider.translate(
+      createRequest({
+        provider: "rest",
+        inputs: [{ type: "text", content: testCase.input }]
+      })
+    );
+
+    validateTranslationResult(result);
+    assert.equal(result.grammarCandidate.schemaVersion, "generic_candidate_v1", testCase.input);
+    assert.equal(result.grammarCandidate.actionFamily, testCase.actionFamily, testCase.input);
+    assert.equal(result.grammarCandidate.targetClass, testCase.targetClass, testCase.input);
+    assert.deepEqual(result.grammarCandidate.targetRefs, testCase.targetRefs, testCase.input);
+    assert.equal("execution" in result.grammarCandidate, false, testCase.input);
+    assert.equal(result.grammarCandidate.nonAuthority.doesNotExecute, true, testCase.input);
+  }
+});
+
+test("generic invalid action family becomes request_clarification", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createGenericRestContent({
+                grammarCandidate: {
+                  actionFamily: "blink_lights_now",
+                  targetClass: "device",
+                  targetRefs: [{ label: "yard lights" }]
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  const result = await provider.translate(createRequest({ provider: "rest" }));
+
+  validateTranslationResult(result);
+  assert.equal(result.grammarCandidate.actionFamily, "request_clarification");
+  assert.equal(result.needsClarification, true);
+  assert(result.grammarCandidate.unresolvedFields.includes("actionFamily"));
+  assert.match(result.grammarCandidate.requiredOperatorDecision, /Clarify/);
+});
+
+test("generic unknown targets produce valid bounded clarification candidates", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createGenericRestContent({
+                grammarCandidate: {
+                  actionFamily: "consumer_defined",
+                  targetClass: "unknown",
+                  targetRefs: [],
+                  unresolvedFields: ["targetRefs"],
+                  requiredOperatorDecision: "Clarify what 'the thing' refers to.",
+                  rawInterpretation: "The operator referred to an unknown prior thing."
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  const result = await provider.translate(
+    createRequest({
+      provider: "rest",
+      inputs: [{ type: "text", content: "Do the thing we discussed" }]
+    })
+  );
+
+  validateTranslationResult(result);
+  assert.equal(result.grammarCandidate.schemaVersion, "generic_candidate_v1");
+  assert.equal(result.grammarCandidate.actionFamily, "request_clarification");
+  assert.equal(result.grammarCandidate.targetClass, "unknown");
+  assert.deepEqual(result.grammarCandidate.targetRefs, []);
+  assert.deepEqual(result.grammarCandidate.unresolvedFields, ["targetRefs"]);
+  assert.equal(result.needsClarification, true);
+});
+
+test("generic idempotency enum is centrally enforced", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createGenericRestContent({
+                grammarCandidate: {
+                  idempotency: "always_safe"
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  await assert.rejects(
+    () => provider.translate(createRequest({ provider: "rest" })),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /idempotency/);
+      return true;
+    }
+  );
+});
+
+test("generic nonAuthority flags are required and cannot be weakened", async () => {
+  const missingProvider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createGenericRestContent({
+                grammarCandidate: {
+                  nonAuthority: null
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+  const weakenedProvider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createGenericRestContent({
+                grammarCandidate: {
+                  nonAuthority: {
+                    doesNotApprove: true,
+                    doesNotExecute: false,
+                    doesNotMutate: true,
+                    doesNotSelectTruth: true,
+                    consumerOwnsAuthority: true
+                  }
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  const missingResult = await missingProvider.translate(createRequest({ provider: "rest" }));
+  validateTranslationResult(missingResult);
+  assert.equal(missingResult.grammarCandidate.nonAuthority.doesNotExecute, true);
+
+  await assert.rejects(
+    () => weakenedProvider.translate(createRequest({ provider: "rest" })),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+      assert.match(error.message, /doesNotExecute/);
+      return true;
+    }
+  );
+});
+
+test("generic provider outputs cannot add approval execution or mutation authority", async () => {
+  for (const grammarCandidate of [
+    { authorityHint: "authorized" },
+    { execution: { mode: "one_shot" } },
+    { mutatesRepo: true },
+    { approved: true }
+  ]) {
+    const provider = new RestProvider({
+      baseUrl: "https://example.test/v1",
+      apiKey: "secret",
+      model: "remote-model",
+      fetchImpl: async () =>
+        createJsonResponse({
+          choices: [
+            {
+              message: {
+                content: createGenericRestContent({ grammarCandidate })
+              }
+            }
+          ]
+        })
+    });
+
+    await assert.rejects(
+      () => provider.translate(createRequest({ provider: "rest" })),
+      (error) => {
+        assert(error instanceof ProviderError);
+        assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
+        assert.match(error.message, /not allowed|authority|execution|mutatesRepo|approved/);
+        return true;
+      }
+    );
+  }
+});
+
+test("REST Ollama and codex-cli normalize generic prompts to the same candidate shape", async () => {
+  const content = createGenericRestContent({
+    confidence: 0.93,
+    grammarCandidate: {
+      actionFamily: "review_evidence",
+      targetClass: "evidence",
+      targetRefs: [{ label: "pending review" }],
+      rawInterpretation: "Review the pending evidence packet."
+    }
+  });
+  const restProvider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content
+            }
+          }
+        ]
+      })
+  });
+  const ollamaProvider = new OllamaProvider({
+    baseUrl: "http://127.0.0.1:11434",
+    model: "qwen3:8b",
+    warmup: false,
+    fetchImpl: async () =>
+      createJsonResponse({
+        response: content
+      })
+  });
+  const { runner } = createMockCodexRunner({ outputContent: content });
+  const codexProvider = new CodexCliProvider({ runner });
+  const request = createRequest({
+    inputs: [{ type: "text", content: "Review the evidence for this claim." }],
+    profile: "command"
+  });
+
+  const restResult = await restProvider.translate({ ...request, provider: "rest" });
+  const ollamaResult = await ollamaProvider.translate({ ...request, provider: "ollama" });
+  const codexResult = await codexProvider.translate({ ...request, provider: "codex-cli" });
+
+  for (const result of [restResult, ollamaResult, codexResult]) {
+    validateTranslationResult(result);
+    assert.equal(result.grammarCandidate.schemaVersion, "generic_candidate_v1");
+    assert.equal(result.grammarCandidate.actionFamily, "review_evidence");
+    assert.equal(result.grammarCandidate.targetClass, "evidence");
+    assert.deepEqual(result.grammarCandidate.targetRefs, [{ label: "pending review" }]);
+  }
+});
+
+test("yard lights prompt becomes generic candidate not consumer-owned command", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createGenericRestContent({
+                grammarCandidate: {
+                  actionFamily: "consumer_defined",
+                  targetClass: "device",
+                  targetRefs: [{ label: "yard lights" }],
+                  idempotency: "conditional",
+                  reversibility: "unknown",
+                  rawInterpretation: "The operator wants a consumer to handle yard lights."
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  const result = await provider.translate(
+    createRequest({
+      provider: "rest",
+      inputs: [{ type: "text", content: "Turn off the yard lights." }]
+    })
+  );
+
+  validateTranslationResult(result);
+  assert.equal(result.grammarCandidate.actionFamily, "consumer_defined");
+  assert.equal(result.grammarCandidate.targetClass, "device");
+  assert.deepEqual(result.grammarCandidate.targetRefs, [{ label: "yard lights" }]);
+  assert.equal("action" in result.grammarCandidate, false);
+  assert.equal("execution" in result.grammarCandidate, false);
+  assert.equal(result.grammarCandidate.nonAuthority.consumerOwnsAuthority, true);
 });
 
 test("rest provider structured prompt is compact and omits giant continuity dumps", async () => {
@@ -1487,6 +1980,7 @@ test("rest provider rejects structured JSON missing intentClass", async () => {
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -1655,6 +2149,7 @@ test("ollama provider checks availability and returns structured command grammar
   const provider = new OllamaProvider({
     baseUrl: "http://127.0.0.1:11434",
     model: "qwen3:8b",
+    warmup: false,
     fetchImpl: async (url, options = {}) => {
       calls.push({ url, options });
 
@@ -1714,7 +2209,59 @@ test("ollama provider checks availability and returns structured command grammar
   assert.match(body.prompt, /Return only valid JSON/);
   assert.match(body.prompt, /No markdown/);
   assert.match(body.prompt, /No reasoning/);
-  assert.match(body.prompt, /target must be an object/);
+  assert.match(body.prompt, /generic_candidate_v1/);
+  assert.match(body.prompt, /nonAuthority/);
+});
+
+test("ollama provider can warm up the model before translation", async () => {
+  const calls = [];
+  const provider = new OllamaProvider({
+    baseUrl: "http://127.0.0.1:11434",
+    model: "qwen3:8b",
+    warmup: true,
+    warmupTimeoutMs: 90000,
+    keepAlive: "10m",
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url, options });
+
+      if (calls.length === 1) {
+        return createJsonResponse({
+          model: "qwen3:8b",
+          response: "",
+          done: true,
+          done_reason: "load"
+        });
+      }
+
+      return createJsonResponse({
+        response: createStructuredRestContent()
+      });
+    }
+  });
+
+  const result = await provider.translate(
+    createRequest({
+      provider: "ollama",
+      timeoutMs: 20
+    })
+  );
+
+  validateTranslationResult(result);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, "http://127.0.0.1:11434/api/generate");
+  assert.equal(calls[1].url, "http://127.0.0.1:11434/api/generate");
+
+  const warmupBody = JSON.parse(calls[0].options.body);
+  assert.equal(warmupBody.model, "qwen3:8b");
+  assert.equal(warmupBody.prompt, "");
+  assert.equal(warmupBody.stream, false);
+  assert.equal(warmupBody.keep_alive, "10m");
+
+  const translateBody = JSON.parse(calls[1].options.body);
+  assert.equal(translateBody.model, "qwen3:8b");
+  assert.equal(translateBody.format, "json");
+  assert.equal(translateBody.stream, false);
+  assert.equal(translateBody.keep_alive, "10m");
 });
 
 test("rest and ollama normalize structured fixtures to the same grammar contract shape", async () => {
@@ -1747,6 +2294,7 @@ test("rest and ollama normalize structured fixtures to the same grammar contract
   const ollamaProvider = new OllamaProvider({
     baseUrl: "http://127.0.0.1:11434",
     model: "qwen3:8b",
+    warmup: false,
     fetchImpl: async () =>
       createJsonResponse({
         response: content
@@ -1777,6 +2325,7 @@ test("ollama malformed JSON blocks with a classified provider error", async () =
   const provider = new OllamaProvider({
     baseUrl: "http://127.0.0.1:11434",
     model: "qwen3:8b",
+    warmup: false,
     fetchImpl: async () =>
       createJsonResponse({
         response: "not json VENICE_INFERENCE_KEY_TESTSECRET"
@@ -1800,6 +2349,7 @@ test("ollama free-text response does not produce a successful command candidate"
   const provider = new OllamaProvider({
     baseUrl: "http://127.0.0.1:11434",
     model: "qwen3:8b",
+    warmup: false,
     fetchImpl: async () =>
       createJsonResponse({
         response: "Local interpretation"
@@ -1828,6 +2378,7 @@ test("ollama reasoning-prefixed response blocks instead of falling back", async 
   const provider = new OllamaProvider({
     baseUrl: "http://127.0.0.1:11434",
     model: "qwen3:8b",
+    warmup: false,
     fetchImpl: async () =>
       createJsonResponse({
         response: `<think>private reasoning</think>\n${createStructuredRestContent()}`
@@ -1865,6 +2416,63 @@ test("rest provider times out with a classified error", async () => {
       assert(error instanceof ProviderError);
       assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_TIMEOUT);
       assert.equal(error.details.timeoutMs, 20);
+      return true;
+    }
+  );
+});
+
+test("ollama provider timeout explains cold model warmup", async () => {
+  const provider = new OllamaProvider({
+    baseUrl: "http://127.0.0.1:11434",
+    model: "llama3.2:3b",
+    warmup: false,
+    fetchImpl: createAbortablePendingFetch()
+  });
+
+  await assert.rejects(
+    () =>
+      provider.translate(
+        createRequest({
+          provider: "ollama",
+          timeoutMs: 20
+        })
+      ),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_TIMEOUT);
+      assert.equal(error.details.timeoutMs, 20);
+      assert.match(error.message, /Ollama can exceed the normal timeout/);
+      assert.match(error.message, /TranslationRequest\.timeoutMs/);
+      assert.match(error.message, /warmupTimeoutMs/);
+      return true;
+    }
+  );
+});
+
+test("ollama provider warmup uses its own timeout budget", async () => {
+  const provider = new OllamaProvider({
+    baseUrl: "http://127.0.0.1:11434",
+    model: "llama3.2:3b",
+    warmup: true,
+    warmupTimeoutMs: 20,
+    fetchImpl: createAbortablePendingFetch()
+  });
+
+  await assert.rejects(
+    () =>
+      provider.translate(
+        createRequest({
+          provider: "ollama",
+          timeoutMs: 100
+        })
+      ),
+    (error) => {
+      assert(error instanceof ProviderError);
+      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_TIMEOUT);
+      assert.equal(error.details.timeoutMs, 20);
+      assert.equal(error.details.phase, "warmup");
+      assert.match(error.message, /warmup timed out/);
+      assert.match(error.message, /OLLAMA_WARMUP_TIMEOUT_MS/);
       return true;
     }
   );
@@ -1908,6 +2516,7 @@ test("ollama provider respects cancellation signals", async () => {
   const provider = new OllamaProvider({
     baseUrl: "http://127.0.0.1:11434",
     model: "llama3.2:3b",
+    warmup: false,
     fetchImpl: createAbortablePendingFetch()
   });
 
