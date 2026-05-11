@@ -58,7 +58,18 @@ const CODEX_CLI_OUTPUT_SCHEMA = Object.freeze({
           items: {
             anyOf: [
               { type: "string" },
-              { type: "object" }
+              {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  id: { type: "string" },
+                  ref: { type: "string" },
+                  label: { type: "string" },
+                  kind: { type: "string" },
+                  type: { type: "string" },
+                  value: { type: "string" }
+                }
+              }
             ]
           }
         },

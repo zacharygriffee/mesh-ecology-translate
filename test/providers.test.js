@@ -294,6 +294,10 @@ test("codex-cli provider returns a valid structured command result", async () =>
   assert.equal(capturedOutputSchema.properties.grammarCandidate.properties.schemaVersion.type, "string");
   assert.equal(capturedOutputSchema.properties.grammarCandidate.properties.actionFamily.type, "string");
   assert.equal(capturedOutputSchema.properties.grammarCandidate.properties.targetClass.type, "string");
+  assert.equal(
+    capturedOutputSchema.properties.grammarCandidate.properties.targetRefs.items.anyOf[1].additionalProperties,
+    false
+  );
   assert.equal(capturedOutputSchema.properties.grammarCandidate.properties.idempotency.type, "string");
   assert.equal(capturedOutputSchema.properties.grammarCandidate.properties.reversibility.type, "string");
   assert.equal(
