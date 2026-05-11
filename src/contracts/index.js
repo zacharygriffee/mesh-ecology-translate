@@ -1,3 +1,8 @@
+import {
+  GENERIC_CANDIDATE_SCHEMA_VERSION,
+  validateGenericCandidate
+} from "./generic-candidate.js";
+
 export const INPUT_TYPES = ["text"];
 export const TRANSLATION_PROFILES = ["command", "conversational", "clarification"];
 export const PROVIDER_PREFERENCES = [
@@ -17,6 +22,16 @@ export const TRANSLATION_CONTEXT_FIELDS = [
   "reasonReferences",
   "evidenceReferences"
 ];
+
+export {
+  GENERIC_ACTION_FAMILIES,
+  GENERIC_CANDIDATE_SCHEMA_VERSION,
+  GENERIC_IDEMPOTENCY_VALUES,
+  GENERIC_REVERSIBILITY_VALUES,
+  GENERIC_TARGET_CLASSES,
+  REQUIRED_NON_AUTHORITY_FLAGS,
+  validateGenericCandidate
+} from "./generic-candidate.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -145,6 +160,11 @@ export function validateTranslationRequest(request) {
 export function validateTranslationResult(result) {
   assert(isPlainObject(result), "TranslationResult must be an object.");
   assert(isPlainObject(result.grammarCandidate), "TranslationResult.grammarCandidate must be an object.");
+
+  if (result.grammarCandidate.schemaVersion === GENERIC_CANDIDATE_SCHEMA_VERSION) {
+    validateGenericCandidate(result.grammarCandidate);
+  }
+
   assert(
     typeof result.confidence === "number" &&
       Number.isFinite(result.confidence) &&

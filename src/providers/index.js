@@ -18,9 +18,11 @@ export {
 export { DEFAULT_PROVIDER_TIMEOUT_MS } from "./runtime.js";
 export {
   DEFAULT_STRUCTURED_GRAMMAR_PROFILE,
+  GENERIC_CANDIDATE_OUTPUT_SCHEMA,
   STRUCTURED_GRAMMAR_PROFILES,
   STRUCTURED_OUTPUT_SCHEMA,
   buildStructuredProviderMessages,
   buildStructuredProviderPrompt,
+  normalizeGenericCandidate,
   parseStructuredProviderOutput
 } from "./structured.js";

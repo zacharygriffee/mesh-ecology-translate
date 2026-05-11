@@ -10,6 +10,14 @@ import {
   createProviderUnavailableError,
   isProviderError
 } from "../errors/index.js";
+import {
+  GENERIC_ACTION_FAMILIES,
+  GENERIC_CANDIDATE_SCHEMA_VERSION,
+  GENERIC_IDEMPOTENCY_VALUES,
+  GENERIC_REVERSIBILITY_VALUES,
+  GENERIC_TARGET_CLASSES,
+  REQUIRED_NON_AUTHORITY_FLAGS
+} from "../contracts/generic-candidate.js";
 import { executeWithRequestControl } from "./runtime.js";
 import {
   DEFAULT_STRUCTURED_GRAMMAR_PROFILE,
@@ -30,96 +38,58 @@ const CODEX_CLI_OUTPUT_SCHEMA = Object.freeze({
       type: "object",
       additionalProperties: false,
       required: [
-        "intentClass",
-        "target",
-        "scope",
-        "action",
-        "consequenceClass",
-        "execution",
-        "responsiveness",
-        "success",
+        "schemaVersion",
+        "actionFamily",
+        "targetClass",
+        "targetRefs",
+        "confidence",
+        "ambiguities",
+        "unresolvedFields",
         "idempotency",
-        "provenance",
-        "audience",
-        "authorityHint",
-        "capabilityHints",
-        "ambiguity",
-        "parameters",
-        "rawInterpretation"
+        "reversibility",
+        "nonAuthority"
       ],
       properties: {
-        intentClass: { type: "string" },
-        target: {
-          type: "object",
-          additionalProperties: false,
-          required: ["actorGroup", "selectedActorIds", "desiredState"],
-          properties: {
-            actorGroup: { type: ["string", "null"] },
-            selectedActorIds: {
-              type: "array",
-              items: { type: "string" }
-            },
-            desiredState: { type: ["string", "null"] }
+        schemaVersion: { const: GENERIC_CANDIDATE_SCHEMA_VERSION },
+        actionFamily: { enum: GENERIC_ACTION_FAMILIES },
+        targetClass: { enum: GENERIC_TARGET_CLASSES },
+        targetRefs: {
+          type: "array",
+          items: {
+            anyOf: [
+              { type: "string" },
+              { type: "object" }
+            ]
           }
         },
-        scope: {
-          type: "object",
-          additionalProperties: false,
-          required: ["area"],
-          properties: {
-            area: { type: ["string", "null"] }
-          }
+        confidence: {
+          type: "number",
+          minimum: 0,
+          maximum: 1
         },
-        action: { type: "string" },
-        consequenceClass: { type: "string" },
-        execution: {
-          type: "object",
-          additionalProperties: false,
-          required: ["mode"],
-          properties: {
-            mode: { type: "string" }
-          }
-        },
-        responsiveness: { type: "string" },
-        success: {
-          type: "object",
-          additionalProperties: false,
-          required: ["evidenceType", "criteria"],
-          properties: {
-            evidenceType: { type: "string" },
-            criteria: { type: "string" }
-          }
-        },
-        idempotency: { type: "string" },
-        provenance: {
-          type: "object",
-          additionalProperties: false,
-          required: ["source", "ingressType"],
-          properties: {
-            source: { type: "string" },
-            ingressType: { type: "string" }
-          }
-        },
-        audience: { type: "string" },
-        authorityHint: { type: "string" },
-        capabilityHints: {
+        ambiguities: {
           type: "array",
           items: { type: "string" }
         },
-        ambiguity: {
+        unresolvedFields: {
+          type: "array",
+          items: { type: "string" }
+        },
+        idempotency: { enum: GENERIC_IDEMPOTENCY_VALUES },
+        reversibility: { enum: GENERIC_REVERSIBILITY_VALUES },
+        requiredOperatorDecision: { type: "string" },
+        suggestedConsumerSurface: { type: "string" },
+        nonAuthority: {
           type: "object",
           additionalProperties: false,
-          required: ["unresolvedFields"],
-          properties: {
-            unresolvedFields: {
-              type: "array",
-              items: { type: "string" }
-            }
-          }
+          required: REQUIRED_NON_AUTHORITY_FLAGS,
+          properties: Object.fromEntries(
+            REQUIRED_NON_AUTHORITY_FLAGS.map((flag) => [flag, { const: true }])
+          )
         },
         parameters: {
           type: "object",
-          additionalProperties: false,
+          additionalProperties: true,
           properties: {}
         },
         rawInterpretation: { type: "string" }

@@ -49,23 +49,23 @@ Confidence should not silently sit below known consumer thresholds for otherwise
 
 ## Grammar Candidate Shape
 
-Normalized grammar candidates must include the portable contract fields needed by downstream consumers:
+Normalized generic candidates must include the portable contract fields needed by downstream consumers:
 
 - `version`
 - `profile`
 - `sourceText`
-- `intentClass`
-- `action`
-- `target` as an object
-- `scope` as an object when present
-- `idempotency`
-- `consequenceClass`
-- `execution` as an object
-- `success` as an object when present
+- `schemaVersion: "generic_candidate_v1"`
+- `actionFamily`
+- `targetClass`
+- `targetRefs`
+- candidate-level `confidence`
 - ambiguity information
-- provenance or metadata
+- `idempotency`
+- `reversibility`
+- `nonAuthority`
+- provenance or metadata when useful
 
-Providers may include additional metadata, but additional fields must not grant authority, imply execution, or require provider-specific consumer logic.
+Providers may include additional metadata, but additional fields must not grant authority, imply execution, imply mutation, select truth, or require provider-specific consumer logic. Legacy `intentClass` / `action` structured output is compatibility behavior only.
 
 ## Provider Adapter Responsibilities
 
@@ -131,4 +131,3 @@ Before adding a provider:
 - verify no execution, tool calling, streaming requirement, or hidden retry behavior is introduced
 - verify malformed and unsafe provider output fails clearly
 - verify no provider-specific consumer branch is needed
-
