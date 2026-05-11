@@ -920,6 +920,10 @@ function readOptionalGenericString(value, path, provider) {
     return null;
   }
 
+  if (typeof value === "string" && value.trim() === "") {
+    return null;
+  }
+
   assertNonEmptyString(value, path, provider);
   return value;
 }
@@ -994,6 +998,11 @@ export function normalizeGenericCandidate({ parsed, request, provider, templateI
     "grammarCandidate.requiredOperatorDecision",
     provider
   );
+  const suggestedConsumerSurface = readOptionalGenericString(
+    rawCandidate.suggestedConsumerSurface,
+    "grammarCandidate.suggestedConsumerSurface",
+    provider
+  );
 
   if (!requiredOperatorDecision && targetClass.targetClass === "unknown") {
     requiredOperatorDecision = "Clarify the intended target or context before any consumer maps this candidate.";
@@ -1020,15 +1029,7 @@ export function normalizeGenericCandidate({ parsed, request, provider, templateI
     idempotency: normalizeGenericIdempotency(rawCandidate.idempotency, { actionFamily, provider }),
     reversibility: normalizeGenericReversibility(rawCandidate.reversibility, { actionFamily, provider }),
     ...(requiredOperatorDecision ? { requiredOperatorDecision } : {}),
-    ...(rawCandidate.suggestedConsumerSurface !== undefined
-      ? {
-          suggestedConsumerSurface: readOptionalGenericString(
-            rawCandidate.suggestedConsumerSurface,
-            "grammarCandidate.suggestedConsumerSurface",
-            provider
-          )
-        }
-      : {}),
+    ...(suggestedConsumerSurface ? { suggestedConsumerSurface } : {}),
     nonAuthority: normalizeGenericNonAuthority(rawCandidate.nonAuthority, provider),
     rawInterpretation:
       readOptionalGenericString(rawCandidate.rawInterpretation, "grammarCandidate.rawInterpretation", provider) ??

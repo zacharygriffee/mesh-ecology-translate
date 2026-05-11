@@ -94,6 +94,17 @@ function extractInterpretation(payload, { allowReasoningContentFallback = false 
   return "";
 }
 
+function extractStructuredInterpretation(payload) {
+  const choice = payload?.choices?.[0];
+  const directContent = flattenContent(choice?.message?.content);
+
+  if (directContent) {
+    return directContent;
+  }
+
+  return normalizeProviderText(flattenContent(choice?.message?.reasoning_content ?? choice?.reasoning_content));
+}
+
 function readMaxTokens(options) {
   const configured =
     options.maxTokens ?? options.max_tokens ?? process.env.REST_MAX_TOKENS ?? DEFAULT_REST_MAX_TOKENS;
@@ -305,7 +316,7 @@ export class RestProvider extends ProviderAdapter {
 
         if (this.structuredOutput) {
           return parseStructuredProviderOutput({
-            content: flattenContent(payload?.choices?.[0]?.message?.content),
+            content: extractStructuredInterpretation(payload),
             request,
             provider: this.name,
             model: this.model,

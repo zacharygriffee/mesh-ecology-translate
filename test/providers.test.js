@@ -974,6 +974,44 @@ test("generic unknown targets produce valid bounded clarification candidates", a
   assert.equal(result.needsClarification, true);
 });
 
+test("generic empty optional strings normalize through REST structured defaults", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createGenericRestContent({
+                grammarCandidate: {
+                  actionFamily: "stop_or_hold",
+                  targetClass: "unknown",
+                  targetRefs: [],
+                  unresolvedFields: ["targetRefs"],
+                  requiredOperatorDecision: "",
+                  suggestedConsumerSurface: "",
+                  rawInterpretation: ""
+                },
+                needsClarification: true
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  const result = await provider.translate(createRequest({ provider: "rest" }));
+
+  validateTranslationResult(result);
+  assert.equal(result.grammarCandidate.actionFamily, "stop_or_hold");
+  assert.equal(result.grammarCandidate.targetClass, "unknown");
+  assert.match(result.grammarCandidate.requiredOperatorDecision, /Clarify/);
+  assert.equal("suggestedConsumerSurface" in result.grammarCandidate, false);
+  assert.equal(result.grammarCandidate.rawInterpretation, "translate this into a grammar candidate");
+});
+
 test("generic idempotency enum is centrally enforced", async () => {
   const provider = new RestProvider({
     baseUrl: "https://example.test/v1",
@@ -1758,7 +1796,7 @@ test("rest provider normalizes status and read-only synonyms to observe", async 
   assert.equal(readOnlyResult.grammarCandidate.intentClass, "observe");
 });
 
-test("rest provider ignores reasoning_content by default when content is empty", async () => {
+test("rest provider structured mode can parse JSON from reasoning_content when content is empty", async () => {
   const provider = new RestProvider({
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
@@ -1769,27 +1807,25 @@ test("rest provider ignores reasoning_content by default when content is empty",
           {
             message: {
               content: "",
-              reasoning_content: "<think>private chain</think>\nReasoning interpretation"
+              reasoning_content: `<think>private chain</think>\n${createGenericRestContent({
+                grammarCandidate: {
+                  actionFamily: "call_for_responses",
+                  targetClass: "operator_context",
+                  targetRefs: [{ label: "local need" }],
+                  rawInterpretation: "Find responders for this local need."
+                }
+              })}`
             }
           }
         ]
       })
   });
 
-  await assert.rejects(
-    () =>
-      provider.translate(
-        createRequest({
-          provider: "rest"
-        })
-      ),
-    (error) => {
-      assert(error instanceof ProviderError);
-      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
-      assert.match(error.message, /message\.content must contain JSON output/);
-      return true;
-    }
-  );
+  const result = await provider.translate(createRequest({ provider: "rest" }));
+
+  validateTranslationResult(result);
+  assert.equal(result.grammarCandidate.actionFamily, "call_for_responses");
+  assert.equal(result.grammarCandidate.rawInterpretation, "Find responders for this local need.");
 });
 
 test("rest provider legacy unstructured mode is explicit", async () => {
