@@ -402,14 +402,17 @@ test("codex-cli provider rejects structured output missing required fields", asy
   });
   const provider = new CodexCliProvider({ runner });
 
-  await assert.rejects(
-    () => provider.translate(createRequest({ profile: "command" })),
-    (error) => {
-      assert(error instanceof ProviderError);
-      assert.equal(error.code, PROVIDER_ERROR_CODES.PROVIDER_INVALID_RESPONSE);
-      assert.match(error.message, /grammarCandidate\.target/);
-      return true;
-    }
+  const result = await provider.translate(createRequest({ profile: "command" }));
+
+  validateTranslationResult(result);
+  assert.equal(result.grammarCandidate.schemaVersion, "generic_candidate_v1");
+  assert.equal(result.grammarCandidate.actionFamily, "request_clarification");
+  assert.equal(result.grammarCandidate.targetClass, "unknown");
+  assert.deepEqual(result.grammarCandidate.targetRefs, []);
+  assert.equal(result.needsClarification, true);
+  assert(
+    result.grammarCandidate.unresolvedFields.includes("targetClass") ||
+      result.grammarCandidate.unresolvedFields.includes("targetRefs")
   );
 });
 
@@ -654,6 +657,7 @@ test("rest provider emits portable control intentClass for yard lights command",
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -843,6 +847,14 @@ test("generic provider gauntlet prompts normalize as bounded candidates", async 
       targetRefs: [{ label: "current operator activity" }]
     },
     {
+      input: "Turn on all yard lights.",
+      actionFamily: "consumer_defined",
+      targetClass: "device",
+      targetRefs: [{ label: "yard lights" }],
+      idempotency: "conditional",
+      reversibility: "unknown"
+    },
+    {
       input: "Turn off the yard lights.",
       actionFamily: "consumer_defined",
       targetClass: "device",
@@ -904,6 +916,160 @@ test("generic provider gauntlet prompts normalize as bounded candidates", async 
     assert.equal("execution" in result.grammarCandidate, false, testCase.input);
     assert.equal(result.grammarCandidate.nonAuthority.doesNotExecute, true, testCase.input);
   }
+});
+
+test("provider normalization coerces messy generic fields across REST Ollama and codex-cli", async () => {
+  const content = createGenericRestContent({
+    grammarCandidate: {
+      actionFamily: "show_status",
+      targetClass: "operator_context",
+      targetRefs: "current status",
+      unresolvedFields: "targetRefs",
+      ambiguities: {
+        message: "Provider was unsure which status surface was intended."
+      }
+    },
+    needsClarification: "unknown",
+    ambiguities: {
+      message: "Top-level ambiguity should normalize."
+    }
+  });
+  const restProvider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content
+            }
+          }
+        ]
+      })
+  });
+  const ollamaProvider = new OllamaProvider({
+    baseUrl: "http://127.0.0.1:11434",
+    model: "qwen3:8b",
+    warmup: false,
+    fetchImpl: async () =>
+      createJsonResponse({
+        response: content
+      })
+  });
+  const { runner } = createMockCodexRunner({ outputContent: content });
+  const codexProvider = new CodexCliProvider({ runner });
+  const request = createRequest({
+    inputs: [{ type: "text", content: "show current status" }],
+    profile: "command"
+  });
+
+  const results = [
+    await restProvider.translate({ ...request, provider: "rest" }),
+    await ollamaProvider.translate({ ...request, provider: "ollama" }),
+    await codexProvider.translate({ ...request, provider: "codex-cli" })
+  ];
+
+  for (const result of results) {
+    validateTranslationResult(result);
+    assert.equal(result.grammarCandidate.schemaVersion, "generic_candidate_v1");
+    assert.equal(result.grammarCandidate.actionFamily, "inspect_status");
+    assert.deepEqual(result.grammarCandidate.targetRefs, [{ label: "current status" }]);
+    assert.deepEqual(result.grammarCandidate.unresolvedFields, ["targetRefs"]);
+    assert.deepEqual(result.grammarCandidate.ambiguities, [
+      "Provider was unsure which status surface was intended."
+    ]);
+    assert.equal(result.needsClarification, true);
+  }
+});
+
+test("ollama normalizes object-like unresolvedFields into clarification candidate", async () => {
+  const provider = new OllamaProvider({
+    baseUrl: "http://127.0.0.1:11434",
+    model: "qwen3:8b",
+    warmup: false,
+    fetchImpl: async () =>
+      createJsonResponse({
+        response: createGenericRestContent({
+          grammarCandidate: {
+            actionFamily: "consumer_defined",
+            targetClass: "unknown",
+            targetRefs: null,
+            unresolvedFields: {
+              actionFamily: true,
+              targetRefs: true
+            },
+            ambiguities: {
+              message: "The provider could not resolve the referenced thing."
+            },
+            requiredOperatorDecision: null,
+            rawInterpretation: "Do the thing we discussed."
+          },
+          needsClarification: "yes"
+        })
+      })
+  });
+
+  const result = await provider.translate(
+    createRequest({
+      provider: "ollama",
+      inputs: [{ type: "text", content: "do the thing we discussed" }]
+    })
+  );
+
+  validateTranslationResult(result);
+  assert.equal(result.grammarCandidate.actionFamily, "request_clarification");
+  assert.equal(result.grammarCandidate.targetClass, "unknown");
+  assert.deepEqual(result.grammarCandidate.targetRefs, []);
+  assert.deepEqual(result.grammarCandidate.unresolvedFields, ["actionFamily", "targetRefs"]);
+  assert.deepEqual(result.grammarCandidate.ambiguities, [
+    "The provider could not resolve the referenced thing."
+  ]);
+  assert.equal(result.needsClarification, true);
+});
+
+test("legacy structured provider output maps into generic_candidate_v1 by default", async () => {
+  const provider = new RestProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "secret",
+    model: "remote-model",
+    fetchImpl: async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: createStructuredRestContent({
+                confidence: 0.9,
+                grammarCandidate: {
+                  intentClass: "control",
+                  action: "turn_on",
+                  target: "yard lights",
+                  rawInterpretation: "Activate all yard lighting devices."
+                }
+              })
+            }
+          }
+        ]
+      })
+  });
+
+  const result = await provider.translate(
+    createRequest({
+      provider: "rest",
+      inputs: [{ type: "text", content: "turn on all yard lights" }]
+    })
+  );
+
+  validateTranslationResult(result);
+  assert.equal(result.grammarCandidate.schemaVersion, "generic_candidate_v1");
+  assert.equal(result.grammarCandidate.actionFamily, "consumer_defined");
+  assert.equal(result.grammarCandidate.targetClass, "consumer_defined");
+  assert.deepEqual(result.grammarCandidate.targetRefs, [{ label: "yard lights" }]);
+  assert.equal("action" in result.grammarCandidate, false);
+  assert.equal("execution" in result.grammarCandidate, false);
+  assert.equal(result.grammarCandidate.nonAuthority.doesNotApprove, true);
+  assert.equal(result.grammarCandidate.nonAuthority.doesNotExecute, true);
 });
 
 test("generic invalid action family becomes request_clarification", async () => {
@@ -1011,7 +1177,7 @@ test("generic empty optional strings normalize through REST structured defaults"
   const result = await provider.translate(createRequest({ provider: "rest" }));
 
   validateTranslationResult(result);
-  assert.equal(result.grammarCandidate.actionFamily, "stop_or_hold");
+  assert.equal(result.grammarCandidate.actionFamily, "request_clarification");
   assert.equal(result.grammarCandidate.targetClass, "unknown");
   assert.match(result.grammarCandidate.requiredOperatorDecision, /Clarify/);
   assert.equal("suggestedConsumerSurface" in result.grammarCandidate, false);
@@ -1401,6 +1567,7 @@ test("rest provider uses message content when reasoning_content is also present"
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -1435,6 +1602,7 @@ test("rest provider normalizes device_control intent synonym to control", async 
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -1473,6 +1641,7 @@ test("rest provider normalizes turn_on desired state and preserves empty actor i
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -1511,6 +1680,7 @@ test("rest provider preserves explicit object target without inventing actor ids
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -1551,6 +1721,7 @@ test("rest provider normalizes string scope to object scope", async () => {
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -1581,6 +1752,7 @@ test("rest provider passes object scope through", async () => {
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -1613,6 +1785,7 @@ test("rest provider rejects invalid non-object scope", async () => {
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -1645,6 +1818,7 @@ test("rest provider normalizes idempotency synonyms to conditional", async () =>
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -1664,6 +1838,7 @@ test("rest provider normalizes idempotency synonyms to conditional", async () =>
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -1724,6 +1899,7 @@ test("rest provider rejects unsupported control actions", async () => {
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -1758,6 +1934,7 @@ test("rest provider normalizes status and read-only synonyms to observe", async 
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -1779,6 +1956,7 @@ test("rest provider normalizes status and read-only synonyms to observe", async 
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -2021,6 +2199,7 @@ test("rest provider rejects structured JSON missing required fields", async () =
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -2090,6 +2269,7 @@ test("rest provider rejects unknown intentClass", async () => {
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -2195,6 +2375,7 @@ test("rest provider rejects unsafe structured grammar fields", async () => {
       baseUrl: "https://example.test/v1",
       apiKey: "secret",
       model: "remote-model",
+      structuredGrammarProfile: "portable_v1",
       fetchImpl: async () =>
         createJsonResponse({
           choices: [
@@ -2227,6 +2408,7 @@ test("ollama provider checks availability and returns structured command grammar
     baseUrl: "http://127.0.0.1:11434",
     model: "qwen3:8b",
     warmup: false,
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async (url, options = {}) => {
       calls.push({ url, options });
 
@@ -2286,8 +2468,8 @@ test("ollama provider checks availability and returns structured command grammar
   assert.match(body.prompt, /Return only valid JSON/);
   assert.match(body.prompt, /No markdown/);
   assert.match(body.prompt, /No reasoning/);
-  assert.match(body.prompt, /generic_candidate_v1/);
-  assert.match(body.prompt, /nonAuthority/);
+  assert.match(body.prompt, /intentClass/);
+  assert.match(body.prompt, /target must be an object/);
 });
 
 test("ollama provider can warm up the model before translation", async () => {
@@ -2357,6 +2539,7 @@ test("rest and ollama normalize structured fixtures to the same grammar contract
     baseUrl: "https://example.test/v1",
     apiKey: "secret",
     model: "remote-model",
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         choices: [
@@ -2372,6 +2555,7 @@ test("rest and ollama normalize structured fixtures to the same grammar contract
     baseUrl: "http://127.0.0.1:11434",
     model: "qwen3:8b",
     warmup: false,
+    structuredGrammarProfile: "portable_v1",
     fetchImpl: async () =>
       createJsonResponse({
         response: content

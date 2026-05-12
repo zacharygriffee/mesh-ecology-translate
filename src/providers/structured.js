@@ -783,8 +783,65 @@ function normalizeGenericStringArray(value, { path, fallback = [], provider }) {
     return value.trim().length > 0 ? [value] : fallback;
   }
 
-  assertStringArray(value, path, provider);
-  return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (typeof item === "string") {
+          return item.trim();
+        }
+
+        if (item === null || item === undefined) {
+          return "";
+        }
+
+        if (typeof item === "number" || typeof item === "boolean") {
+          return String(item);
+        }
+
+        if (isPlainObject(item)) {
+          return readGenericStringFromObject(item) ?? JSON.stringify(compactJsonValue(item) ?? item);
+        }
+
+        return "";
+      })
+      .filter((item) => item.length > 0);
+  }
+
+  if (isPlainObject(value)) {
+    const objectString = readGenericStringFromObject(value);
+
+    if (objectString) {
+      return [objectString];
+    }
+
+    const keys = Object.entries(value)
+      .filter(([, item]) => item !== false && item !== null && item !== undefined)
+      .map(([key]) => key)
+      .filter((key) => key.length > 0);
+
+    if (keys.length > 0) {
+      return keys;
+    }
+
+    const compact = compactJsonValue(value);
+    return compact === undefined ? fallback : [JSON.stringify(compact)];
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return [String(value)];
+  }
+
+  throw createInvalidStructuredResponseError(provider, `${path} must be recoverable as an array of strings.`);
+}
+
+function readGenericStringFromObject(value) {
+  for (const key of ["field", "path", "name", "id", "message", "reason", "description", "label"]) {
+    if (typeof value[key] === "string" && value[key].trim().length > 0) {
+      return value[key].trim();
+    }
+  }
+
+  return null;
 }
 
 function normalizeGenericActionFamily(value, provider) {
@@ -820,8 +877,15 @@ function normalizeGenericActionFamily(value, provider) {
   };
 }
 
-function normalizeGenericTargetClass(value, provider) {
+function normalizeGenericTargetClass(value, { provider, hasTargetRefs = false } = {}) {
   if (value === undefined || value === null) {
+    if (hasTargetRefs) {
+      return {
+        targetClass: "consumer_defined",
+        normalizedFrom: "targetRefs"
+      };
+    }
+
     return {
       targetClass: "unknown",
       unresolvedField: "targetClass",
@@ -926,6 +990,31 @@ function normalizeGenericTargetRefs(value, provider) {
     .filter((item) => item !== null);
 }
 
+function normalizeGenericBoolean(value, fallback) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    switch (value.trim().toLowerCase()) {
+      case "1":
+      case "true":
+      case "yes":
+      case "y":
+        return true;
+      case "0":
+      case "false":
+      case "no":
+      case "n":
+        return false;
+      default:
+        return fallback;
+    }
+  }
+
+  return fallback;
+}
+
 function normalizeGenericNonAuthority(value, provider) {
   if (value !== undefined && value !== null) {
     if (!isPlainObject(value)) {
@@ -1016,12 +1105,12 @@ export function normalizeGenericCandidate({ parsed, request, provider, templateI
     rawCandidate.actionFamily ?? rawCandidate.action ?? rawCandidate.intentClass ?? rawCandidate.intent,
     provider
   );
-  const targetClass = normalizeGenericTargetClass(
-    rawCandidate.targetClass ?? rawCandidate.targetType,
-    provider
-  );
   let actionFamily = action.actionFamily;
   const targetRefs = normalizeGenericTargetRefs(rawCandidate.targetRefs ?? rawCandidate.target, provider);
+  const targetClass = normalizeGenericTargetClass(
+    rawCandidate.targetClass ?? rawCandidate.targetType,
+    { provider, hasTargetRefs: targetRefs.length > 0 }
+  );
   const confidence = readGenericConfidence(parsed, rawCandidate, provider);
   const ambiguities = normalizeGenericStringArray(rawCandidate.ambiguities ?? parsed.ambiguities, {
     path: "grammarCandidate.ambiguities",
@@ -1058,20 +1147,21 @@ export function normalizeGenericCandidate({ parsed, request, provider, templateI
       unresolvedFields.push("targetRefs");
     }
 
-    if (actionFamily === "consumer_defined") {
+    if (actionFamily !== "request_clarification") {
       actionFamily = "request_clarification";
     }
   }
 
-  const needsClarification =
-    parsed.needsClarification === true ||
+  const derivedNeedsClarification =
     actionFamily === "request_clarification" ||
     targetClass.targetClass === "unknown" ||
-    unresolvedFields.length > 0;
-
-  if (parsed.needsClarification !== undefined && typeof parsed.needsClarification !== "boolean") {
-    throw createInvalidStructuredResponseError(provider, "needsClarification must be a boolean.");
-  }
+    unresolvedFields.length > 0 ||
+    ambiguities.length > 0;
+  const providerNeedsClarification = normalizeGenericBoolean(parsed.needsClarification, null);
+  const needsClarification =
+    providerNeedsClarification === null
+      ? derivedNeedsClarification
+      : providerNeedsClarification || derivedNeedsClarification;
 
   let requiredOperatorDecision = readOptionalGenericString(
     rawCandidate.requiredOperatorDecision,
@@ -1189,11 +1279,9 @@ export function parseStructuredProviderOutput({
   }
 
   const usesGenericCandidate =
+    structuredGrammarProfile === GENERIC_CANDIDATE_SCHEMA_VERSION ||
     parsed.grammarCandidate.schemaVersion === GENERIC_CANDIDATE_SCHEMA_VERSION ||
-    parsed.grammarCandidate.actionFamily !== undefined ||
-    (structuredGrammarProfile === GENERIC_CANDIDATE_SCHEMA_VERSION &&
-      parsed.grammarCandidate.intentClass === undefined &&
-      parsed.grammarCandidate.intent === undefined);
+    parsed.grammarCandidate.actionFamily !== undefined;
 
   if (usesGenericCandidate) {
     const normalized = normalizeGenericCandidate({
