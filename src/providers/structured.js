@@ -404,7 +404,7 @@ export function buildStructuredProviderMessages(request, { structuredGrammarProf
         `intentClass enum: ${PORTABLE_INTENT_CLASSES.join(", ")}.`,
         "target must be an object. Do not invent selectedActorIds.",
         "scope must be an object or null, never a string.",
-        "Yard-lights example: target {\"actorGroup\":\"yard_lights\",\"selectedActorIds\":[],\"desiredState\":\"off\"}; scope {\"area\":\"yard\"}; idempotency \"conditional\".",
+        "Generic example: target {\"targetClass\":\"operator_context\",\"targetRefs\":[{\"label\":\"local status surface\"}],\"desiredOutcome\":\"inspect status\"}; scope {\"boundary\":\"local\"}; idempotency \"read_only\".",
         "authorityHint must be none. capabilityHints must contain only publish_candidate."
       ].join(" ")
     },
