@@ -1,5 +1,25 @@
 # TODO
 
+## Adjacent Tool Interop Alignment
+
+- [ ] Keep translate aligned as the translation-only profile of the shared descriptor/request/receipt seam.
+  - Treat "local layer" as operator-facing explicit artifact interop: Edge may submit bounded translation requests and inspect translation results without translate gaining tools, authority, execution, or mesh behavior.
+  - Treat existing `TranslationRequest` and `TranslationResult` as the stable request/result pair for Edge ingress.
+  - Support richer explicit context payloads from Edge only as translation input:
+    - operator focus
+    - active referents
+    - portal/export visibility
+    - continuity summaries
+    - ambiguity markers
+    - reason/evidence references
+  - Consider other translate local-layer surfacable capabilities:
+    - provider profile descriptors
+    - provider availability posture
+    - supported input/context vocabulary
+    - normalized provider error receipts
+  - Do not add tool calling, execution, authority, mesh interaction, workflow/runtime behavior, hidden memory, or agent loops.
+  - Accept when: Edge can use translate for common-language ingress while translate remains provider-routing/normalization only.
+
 ## Potential Provider Support Plan
 
 These are possible future provider support targets that fit the current library posture. This is a planning note only, not a commitment.
