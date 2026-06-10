@@ -39,6 +39,14 @@ export {
   ProviderError
 } from "./errors/index.js";
 export {
+  FILE_RESOURCE_SOURCE_CONTINUITY_ACCEPTANCE_VERB,
+  OPERATOR_INTENT_TRANSLATION_KIND,
+  OPERATOR_INTENT_TRANSLATION_SCHEMA,
+  buildOperatorIntentTranslation,
+  getOperatorIntentTranslationIssues,
+  validateOperatorIntentTranslation
+} from "./operator-intent-translation.js";
+export {
   EDGE_IMPORT_CLASSIFICATION,
   EDGE_PHASE_174_STATIC_FIXTURE_PATH,
   PROJECT_REVIEW_STATUSES,

@@ -1,0 +1,43 @@
+{
+  "artifactKind": "operator_intent_translation",
+  "schemaVersion": "operator_intent_translation.v0",
+  "translationRef": "operator-intent-translation:0d78e6f20afcf1d0",
+  "translatedAt": "2026-06-10T08:00:00.000Z",
+  "proofRung": "candidate_grammar",
+  "operatorText": "accept this lifted file's source continuity into my local layer",
+  "candidate": {
+    "requestedVerb": "accept_file_resource_source_continuity",
+    "targetLayerRef": "layer:operator-local",
+    "targetContextRef": "context:file-resource-lift:operator-local",
+    "sourceResourceRefs": [
+      "studio-file-resource-lift-source-candidate:studio-local-presentation-surface-example"
+    ],
+    "sourceEvidenceRefs": [
+      "bytes-studio-file-resource-lift-visibility-evidence:85f6ba4ebc8f9de6",
+      "edge-file-resource-source-continuity-acceptance-remaining-blockers-visibility:56f2f0daff0f84c5"
+    ],
+    "confidence": 0.82,
+    "ambiguityRefs": [],
+    "unresolvedFields": [],
+    "idempotency": "conditional",
+    "reversibility": "irreversible",
+    "requiresOperatorConfirmation": true,
+    "requiresRbcAdmissibility": true,
+    "requiresLayerAppend": true,
+    "clarificationNeeded": false
+  },
+  "providerInfo": {
+    "provider": "deterministic-local",
+    "model": "operator-intent-translation-v0"
+  },
+  "nonClaims": {
+    "approval": false,
+    "execution": false,
+    "admission": false,
+    "layerAppend": false,
+    "rbcDecision": false,
+    "canonicalTruth": false,
+    "authority": false
+  },
+  "translationHash": "sha256:aeb7487f8f6c8dc9125684e2de4297e1b537b139e33b0149e977db3fa938baca"
+}
